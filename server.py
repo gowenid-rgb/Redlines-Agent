@@ -50,13 +50,19 @@ class RedlineHandler(SimpleHTTPRequestHandler):
             content_len = int(self.headers.get("Content-Length", 0))
             post_body = self.rfile.read(content_len)
 
-            # Extract model from query param (default: gemini-2.5-flash)
-            query_model = "gemini-2.5-flash"
+            # Extract model from query param (default: gemini-3.8-flash)
+            query_model = "gemini-3.8-flash"
             if "model=" in self.path:
                 try:
                     query_model = self.path.split("model=")[1].split("&")[0]
                 except Exception:
                     pass
+
+            # Auto-map deprecated model identifiers to current active Google Gemini models
+            if query_model in ("gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"):
+                query_model = "gemini-3.8-flash"
+            elif query_model in ("gemini-2.5-pro", "gemini-1.5-pro"):
+                query_model = "gemini-3.1-pro-preview"
 
             gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{query_model}:generateContent?key={api_key}"
             req = urllib.request.Request(
