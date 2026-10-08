@@ -18,3 +18,7 @@ Automated CAD Drawing Redline Studio & Engineering Change Assistant.
   - Unmodified revision history blocks and protected title block revision letters
 - **Python Automation**:
   - PyMuPDF scripts for automated batch processing and crop verification
+
+## Deployment (Railway / Cloud)
+- **Direct Web Access**: Serves `index.html` via `server.py` on `$PORT`.
+- **Dockerfile & Procfile**: Included for instant one-click deployment on platforms like Railway.
