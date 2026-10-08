@@ -8,8 +8,10 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- PDF.js for client-side PDF rendering -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <!-- PDF-Lib for client-side PDF generation & download -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.9/pdf-lib.min.js"></script>
+  <!-- PDF-Lib for client-side PDF generation & download (Local bundled + multi-CDN fallback) -->
+  <script src="pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -1732,6 +1734,42 @@ Return strict JSON with this structure:
       renderActiveDrawing();
     }
 
+    // Robust async loader for PDF-Lib (bundled local script with multi-CDN fallback)
+    async function ensurePdfLib() {
+      if (window.PDFLib && window.PDFLib.PDFDocument) return window.PDFLib;
+
+      const sources = [
+        'pdf-lib.min.js',
+        '/pdf-lib.min.js',
+        'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js',
+        'https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js'
+      ];
+
+      for (const src of sources) {
+        if (window.PDFLib && window.PDFLib.PDFDocument) return window.PDFLib;
+        try {
+          await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = src;
+            script.onload = () => {
+              if (window.PDFLib && window.PDFLib.PDFDocument) resolve();
+              else reject(new Error('PDFLib object missing'));
+            };
+            script.onerror = () => reject(new Error(`Failed to load ${src}`));
+            document.head.appendChild(script);
+          });
+          if (window.PDFLib && window.PDFLib.PDFDocument) return window.PDFLib;
+        } catch (e) {
+          console.warn(`Could not load PDF-Lib from ${src}:`, e.message);
+        }
+      }
+
+      if (!window.PDFLib || !window.PDFLib.PDFDocument) {
+        throw new Error('PDF-Lib failed to load. Please check your internet connection.');
+      }
+      return window.PDFLib;
+    }
+
     // Download Redlined PDF using PDF-Lib
     async function downloadActiveRedline() {
       const file = state.files.find(f => f.id === state.activeFileId);
@@ -1740,16 +1778,26 @@ Return strict JSON with this structure:
         return;
       }
 
-      try {
-        if (!window.PDFLib) {
-          alert("PDF-Lib library is loading, please try again in a moment.");
-          return;
-        }
+      const btn = document.getElementById('downloadBtn');
+      const originalHtml = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `
+          <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          Exporting...
+        `;
+      }
 
-        const { PDFDocument, rgb, StandardFonts } = PDFLib;
-        const pdfDoc = await PDFDocument.load(file.pdfBytes.slice(0));
+      try {
+        const PDFLibInstance = await ensurePdfLib();
+        const { PDFDocument, rgb, StandardFonts } = PDFLibInstance;
+        const pdfDoc = await PDFDocument.load(file.pdfBytes.slice(0), { ignoreEncryption: true });
         const pages = pdfDoc.getPages();
-        const page = pages[0]; // First sheet
+        const pageIdx = Math.max(0, Math.min(pages.length - 1, (state.currentPage || 1) - 1));
+        const page = pages[pageIdx];
         const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
         const pageHeight = page.getHeight();
@@ -1941,14 +1989,22 @@ Return strict JSON with this structure:
         const blob = new Blob([modifiedBytes], { type: 'application/pdf' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `${file.partNo} redlines.pdf`;
+        link.download = `${file.partNo || 'drawing'} redlines.pdf`;
         document.body.appendChild(link);
         link.click();
-        document.body.removeChild(link);
+        setTimeout(() => {
+          document.body.removeChild(link);
+          URL.revokeObjectURL(link.href);
+        }, 150);
 
       } catch (err) {
         console.error("PDF export error", err);
         alert("Failed to export redlined PDF: " + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        }
       }
     }
 

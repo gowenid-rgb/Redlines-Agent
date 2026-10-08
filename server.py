@@ -17,6 +17,15 @@ MODEL_ALIASES = {
 }
 
 class RedlineHandler(SimpleHTTPRequestHandler):
+    extensions_map = SimpleHTTPRequestHandler.extensions_map.copy()
+    extensions_map.update({
+        ".js": "application/javascript",
+        ".mjs": "application/javascript",
+        ".css": "text/css",
+        ".html": "text/html",
+        ".json": "application/json",
+    })
+
     def do_GET(self):
         # Route root path to index.html
         if self.path in ("/", ""):
