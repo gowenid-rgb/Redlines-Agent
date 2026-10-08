@@ -36,11 +36,11 @@ All dimension redlines must list **both inches and millimeters**:
 
 All markup is drawn in **Red** (`#FF0000` / RGB `1.0, 0.0, 0.0`):
 
-### Specification Blocks (Density, IFD & Material)
-- **Location**: Bottom right quadrant (`x > 1700, y > 1300`).
-- **Old Value**: Crossed out with a horizontal red line through text baseline.
-- **New Value**: Written directly above or in place of old value in red bold (font size 18 - 22 pt, e.g. `DENSITY: 1.5 lb/ft³, IFD: 20`).
-- **Revision Cloud**: Wavy revision cloud (`clouds = 2`, `width = 1.5 pt`) surrounds both old crossed-out text and new value.
+### Specification Blocks & Material Changes (Title Block Rule)
+- **CRITICAL - NO TITLE BLOCK OVERLAPPING**: Notes must NEVER be drawn directly inside the title block grid cells, as red text overlaps black title block text and grid lines, making it illegible.
+- **Placement**: The revision note must be posted **above the title block** in the clear open drawing area (`x: ~1680, y: ~1060`), formatted with prominent red bold text and enclosed in a revision cloud.
+- **Leader Line & Arrow**: Draw a red leader line (with a smooth curve or dogleg) and filled arrowhead pointing down from the revision note into the specific title block cell where the spec or material changed.
+- **Strike-Through**: The old value inside the title block cell (e.g. `DENSITY: 2.5 lb/ft³, IFD: 28 HR` or `POLYURETHANE FOAM`) is cleanly struck through with a red horizontal line.
 
 ### Dimensions
 - **Old Value**: Crossed out with a horizontal red line.

@@ -794,6 +794,41 @@
       ctx.restore();
     }
 
+    // Draw Curved Leader Arrow from Note to Target Title Block Cell
+    function drawLeaderArrow(ctx, fromX, fromY, toX, toY, headLength = 16) {
+      ctx.save();
+      ctx.strokeStyle = '#E53E3E';
+      ctx.fillStyle = '#E53E3E';
+      ctx.lineWidth = 2.5;
+
+      // Smooth curved leader line (sweeping slightly left like the engineering drafting standard)
+      const dx = toX - fromX;
+      const dy = toY - fromY;
+      const cp1X = fromX - 60;
+      const cp1Y = fromY + dy * 0.4;
+      const cp2X = Math.min(fromX, toX) - 20;
+      const cp2Y = fromY + dy * 0.85;
+
+      ctx.beginPath();
+      ctx.moveTo(fromX, fromY);
+      ctx.bezierCurveTo(cp1X, cp1Y, cp2X, cp2Y, toX, toY);
+      ctx.stroke();
+
+      // Tangent angle at the arrow tip (toX, toY) relative to cp2
+      const angle = Math.atan2(toY - cp2Y, toX - cp2X);
+      const headAngle = Math.PI / 7;
+
+      // Filled Arrowhead pointing at (toX, toY)
+      ctx.beginPath();
+      ctx.moveTo(toX, toY);
+      ctx.lineTo(toX - headLength * Math.cos(angle - headAngle), toY - headLength * Math.sin(angle - headAngle));
+      ctx.lineTo(toX - headLength * Math.cos(angle + headAngle), toY - headLength * Math.sin(angle + headAngle));
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.restore();
+    }
+
     // Render Redlines Overlay
     function renderRedlinesOnOverlay(file, renderScale = 2.0) {
       const overlay = document.getElementById('redlineOverlayCanvas');
@@ -807,7 +842,64 @@
       ctx.scale(renderScale, renderScale);
 
       file.redlines.forEach(rl => {
-        if (rl.type === 'note') {
+        // A. TITLE BLOCK SPECIFICATION & MATERIAL CHANGES (Posted above title block with leader arrow)
+        if (rl.type === 'specification_change' || rl.type === 'material_change') {
+          // 1. Strike out old value inside the title block cell
+          const cx = rl.cellX || 1760;
+          const cy = rl.cellY || (rl.type === 'material_change' ? 1322 : 1379);
+
+          ctx.font = `bold 20px Helvetica, Arial, sans-serif`;
+          const oldW = ctx.measureText(rl.oldValue || '').width || 140;
+
+          ctx.strokeStyle = '#E53E3E';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(cx - 4, cy + 8);
+          ctx.lineTo(cx + oldW + 4, cy + 8);
+          ctx.stroke();
+
+          // 2. Render Note & Cloud in open area ABOVE the title block
+          const nx = rl.x || 1680;
+          const ny = rl.y || 1060;
+          const fSize = Math.max(20, rl.fontSize || 22);
+
+          ctx.font = `bold ${fSize}px Helvetica, Arial, sans-serif`;
+          ctx.fillStyle = '#E53E3E';
+          ctx.textBaseline = 'top';
+
+          const noteLines = rl.lines || [
+            rl.type === 'material_change' ? "REVISED MATERIAL:" : "REVISED SPECIFICATION:",
+            rl.newValue
+          ];
+
+          let maxW = 0;
+          noteLines.forEach(l => {
+            const w = ctx.measureText(l).width;
+            if (w > maxW) maxW = w;
+          });
+
+          const pad = 16;
+          const lineH = fSize * 1.35;
+          const totalTextH = noteLines.length * lineH;
+          const boxH = totalTextH + pad * 2;
+          drawWavyCloud(ctx, nx - pad, ny - pad, maxW + pad * 2, boxH);
+
+          // Draw note text lines inside cloud
+          noteLines.forEach((l, idx) => {
+            ctx.fillText(l, nx, ny + idx * lineH);
+          });
+
+          // 3. Draw Leader Arrow pointing from note down into the title block cell
+          const startX = nx + 25;
+          const startY = ny + totalTextH + pad / 2;
+          const endX = cx + 25;
+          const endY = cy + 4;
+
+          drawLeaderArrow(ctx, startX, startY, endX, endY);
+          ctx.textBaseline = 'alphabetic';
+
+        // B. GENERAL DRAWING NOTES
+        } else if (rl.type === 'note') {
           const nx = rl.x;
           const ny = rl.y;
           const fSize = Math.max(24, rl.fontSize || 24);
@@ -815,28 +907,25 @@
           ctx.font = `bold ${fSize}px Helvetica, Arial, sans-serif`;
           ctx.fillStyle = '#E53E3E';
 
-          // Measure lines
           let maxWidth = 0;
           rl.lines.forEach(line => {
             const m = ctx.measureText(line).width;
             if (m > maxWidth) maxWidth = m;
           });
 
-          // Draw Cloud around note
           const pad = 18;
           const boxH = (rl.lines.length * (fSize * 1.35)) + pad * 2;
           drawWavyCloud(ctx, nx - pad, ny - fSize - pad / 2, maxWidth + pad * 2, boxH);
 
-          // Draw Lines
           rl.lines.forEach((line, idx) => {
             ctx.fillText(line, nx, ny + idx * (fSize * 1.3));
           });
 
-        } else if (rl.type === 'dimension_change' || rl.type === 'specification_change' || rl.type === 'material_change') {
+        // C. DRAWING WINDOW DIMENSION CHANGES
+        } else if (rl.type === 'dimension_change') {
           const dx = rl.x;
           const dy = rl.y;
-          const isSpec = rl.type === 'specification_change' || rl.type === 'material_change';
-          const fSize = isSpec ? Math.min(22, Math.max(18, rl.fontSize || 20)) : Math.max(20, rl.fontSize || 24);
+          const fSize = Math.max(20, rl.fontSize || 24);
 
           ctx.font = `bold ${fSize}px Helvetica, Arial, sans-serif`;
 
@@ -1322,10 +1411,14 @@
             target: 'specification',
             oldValue: elements.specLine.text,
             newValue: newSpecStr,
-            x: elements.specLine.x,
-            y: elements.specLine.y,
-            fontSize: 20,
-            cloud: true
+            lines: ["REVISED SPECIFICATION:", newSpecStr],
+            cellX: elements.specLine.x,
+            cellY: elements.specLine.y,
+            x: 1680,
+            y: 1060,
+            fontSize: 22,
+            cloud: true,
+            hasLeader: true
           });
         } else {
           activeFile.redlines.push({
@@ -1333,10 +1426,14 @@
             target: 'specification',
             oldValue: "DENSITY: 2.5 lb/ft³, IFD: 28 HR",
             newValue: newSpecStr,
-            x: 1760,
-            y: 1379,
-            fontSize: 20,
-            cloud: true
+            lines: ["REVISED SPECIFICATION:", newSpecStr],
+            cellX: 1760,
+            cellY: 1379,
+            x: 1680,
+            y: 1060,
+            fontSize: 22,
+            cloud: true,
+            hasLeader: true
           });
         }
       }
@@ -1354,10 +1451,14 @@
           target: 'material',
           oldValue: oldMat,
           newValue: newMat.toUpperCase(),
-          x: xPos,
-          y: yPos,
-          fontSize: 20,
-          cloud: true
+          lines: ["REVISED MATERIAL:", newMat.toUpperCase()],
+          cellX: xPos,
+          cellY: yPos,
+          x: 1680,
+          y: 1060,
+          fontSize: 22,
+          cloud: true,
+          hasLeader: true
         });
       }
 
@@ -1459,7 +1560,8 @@
 5. ZERO GHOST REDLINES / CRITICAL RULE: ONLY generate modifications that the user EXPLICITLY requested in their prompt. DO NOT invent or carry over unrequested modifications (such as 32.75" or seam relocation) unless the user explicitly requested them in the change request.
 6. PDF Layout Knowledge:
    - THICKNESS: Thickness is usually the smallest linear dimension on the drawing (located on the side view). Match the coordinates of the detected thickness dimension!
-   - TITLE BLOCK SPECS: IFD, Density, and material specifications live in the bottom-right title block SPECIFICATION cell (x: ~1760, y: ~1379). Point to and strike through the old spec, writing the new spec in its place.
+   - TITLE BLOCK SPECS & MATERIAL CHANGES: IFD, Density, and material specifications live in the bottom-right title block cells (SPECIFICATION at x: ~1760, y: ~1379, MATERIAL at x: ~1760, y: ~1322).
+     CRITICAL PLACEMENT RULE: Revision notes MUST NEVER be drawn directly inside the title block grid cells, as red text overlaps black title block text and grid lines, becoming illegible. INSTEAD, revision notes MUST be posted in the clear drawing area ABOVE the title block (x: 1680, y: 1060) surrounded by a revision cloud, with a leader arrow pointing down to the struck-through title block cell.
    - DUAL UNITS STANDARD: All dimension redlines must list BOTH inches and millimeters (e.g. 4.5" [114.3 mm] or 37.64" [956.0 mm]).
    - GENERAL NOTES: Prominent revision notes go in the open drawing area (x: 950, y: 130).
 
@@ -1548,17 +1650,28 @@ Return strict JSON with this structure:
               }
               mod.newValue = formatDualDimension(mod.newValue);
               mod.type = 'dimension_change';
-            } else if (mod.target === 'specification' || /density|ifd|spec/i.test(mod.newValue || '') || /density|ifd|spec/i.test(mod.oldValue || '')) {
-              if (elements && elements.specLine) {
-                mod.x = elements.specLine.x;
-                mod.y = elements.specLine.y;
-                mod.oldValue = elements.specLine.text;
-              } else {
-                mod.x = 1760;
-                mod.y = 1379;
-              }
+            } else if (mod.target === 'specification' || mod.type === 'specification_change' || /density|ifd|spec/i.test(mod.newValue || '') || /density|ifd|spec/i.test(mod.oldValue || '')) {
               mod.type = 'specification_change';
-              mod.fontSize = Math.min(24, Math.max(18, mod.fontSize || 20));
+              mod.cellX = elements && elements.specLine ? elements.specLine.x : 1760;
+              mod.cellY = elements && elements.specLine ? elements.specLine.y : 1379;
+              mod.oldValue = elements && elements.specLine ? elements.specLine.text : (mod.oldValue || "DENSITY: 2.5 lb/ft³, IFD: 28 HR");
+              mod.x = 1680;
+              mod.y = 1060;
+              mod.lines = ["REVISED SPECIFICATION:", mod.newValue];
+              mod.fontSize = 22;
+              mod.cloud = true;
+              mod.hasLeader = true;
+            } else if (mod.target === 'material' || mod.type === 'material_change' || /material|polyurethane/i.test(mod.newValue || '')) {
+              mod.type = 'material_change';
+              mod.cellX = elements && elements.materialLine ? elements.materialLine.x : 1760;
+              mod.cellY = elements && elements.materialLine ? elements.materialLine.y : 1322;
+              mod.oldValue = elements && elements.materialLine ? elements.materialLine.text : (mod.oldValue || "POLYURETHANE FOAM");
+              mod.x = 1680;
+              mod.y = 1060;
+              mod.lines = ["REVISED MATERIAL:", mod.newValue];
+              mod.fontSize = 22;
+              mod.cloud = true;
+              mod.hasLeader = true;
             } else if (mod.type === 'dimension_change') {
               mod.newValue = formatDualDimension(mod.newValue);
               if (elements && elements.dimensions) {
@@ -1641,62 +1754,184 @@ Return strict JSON with this structure:
 
         const pageHeight = page.getHeight();
 
+        // Helper function to draw curved leader arrow in PDF-Lib
+        function drawPdfLeaderArrow(page, fromX, fromY, toX, toY, color) {
+          const dx = toX - fromX;
+          const dy = toY - fromY;
+          const cp1X = fromX - 60;
+          const cp1Y = fromY + dy * 0.4;
+          const cp2X = Math.min(fromX, toX) - 20;
+          const cp2Y = fromY + dy * 0.85;
+
+          const steps = 14;
+          let prevX = fromX;
+          let prevY = fromY;
+
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const mt = 1 - t;
+            const curX = mt * mt * mt * fromX + 3 * mt * mt * t * cp1X + 3 * mt * t * t * cp2X + t * t * t * toX;
+            const curY = mt * mt * mt * fromY + 3 * mt * mt * t * cp1Y + 3 * mt * t * t * cp2Y + t * t * t * toY;
+
+            page.drawLine({
+              start: { x: prevX, y: prevY },
+              end: { x: curX, y: curY },
+              thickness: 2.2,
+              color: color
+            });
+            prevX = curX;
+            prevY = curY;
+          }
+
+          // Tangent angle at the arrow tip (toX, toY) relative to cp2
+          const angle = Math.atan2(toY - cp2Y, toX - cp2X);
+          const headLength = 15;
+          const headAngle = Math.PI / 7;
+
+          const barb1X = toX - headLength * Math.cos(angle - headAngle);
+          const barb1Y = toY - headLength * Math.sin(angle - headAngle);
+          const barb2X = toX - headLength * Math.cos(angle + headAngle);
+          const barb2Y = toY - headLength * Math.sin(angle + headAngle);
+
+          page.drawLine({
+            start: { x: toX, y: toY },
+            end: { x: barb1X, y: barb1Y },
+            thickness: 2.2,
+            color: color
+          });
+          page.drawLine({
+            start: { x: toX, y: toY },
+            end: { x: barb2X, y: barb2Y },
+            thickness: 2.2,
+            color: color
+          });
+          page.drawLine({
+            start: { x: barb1X, y: barb1Y },
+            end: { x: barb2X, y: barb2Y },
+            thickness: 1.8,
+            color: color
+          });
+        }
+
         // Draw redline annotations
         file.redlines.forEach(rl => {
-          if (rl.type === 'note') {
-            const fSize = Math.max(24, rl.fontSize || 24);
-            rl.lines.forEach((line, idx) => {
-              page.drawText(line, {
-                x: rl.x,
-                y: pageHeight - rl.y - (idx * (fSize * 1.3)),
+          // A. TITLE BLOCK SPECIFICATION & MATERIAL CHANGES
+          if (rl.type === 'specification_change' || rl.type === 'material_change') {
+            const cx = rl.cellX || 1760;
+            const cy = rl.cellY || (rl.type === 'material_change' ? 1322 : 1379);
+            const nx = rl.x || 1680;
+            const ny = rl.y || 1060;
+            const fSize = Math.max(20, rl.fontSize || 22);
+
+            const noteLines = rl.lines || [
+              rl.type === 'material_change' ? "REVISED MATERIAL:" : "REVISED SPECIFICATION:",
+              rl.newValue
+            ];
+
+            // 1. Strike out old value in title block cell
+            const oldW = font.widthOfTextAtSize(rl.oldValue || '', 18);
+            page.drawLine({
+              start: { x: cx - 4, y: pageHeight - cy - 8 },
+              end: { x: cx + oldW + 4, y: pageHeight - cy - 8 },
+              thickness: 2.5,
+              color: rgb(0.9, 0.15, 0.15)
+            });
+
+            // 2. Note and Cloud in clear space ABOVE title block
+            let maxW = 0;
+            noteLines.forEach(l => {
+              const w = font.widthOfTextAtSize(l, fSize);
+              if (w > maxW) maxW = w;
+            });
+
+            const pad = 16;
+            const lineH = fSize * 1.35;
+            const totalH = noteLines.length * lineH;
+
+            // Cloud bounding rectangle
+            page.drawRectangle({
+              x: nx - pad,
+              y: pageHeight - ny - totalH - pad,
+              width: maxW + pad * 2,
+              height: totalH + pad * 2,
+              borderColor: rgb(0.9, 0.15, 0.15),
+              borderWidth: 2.0
+            });
+
+            // Draw note text inside cloud
+            noteLines.forEach((l, idx) => {
+              page.drawText(l, {
+                x: nx,
+                y: pageHeight - ny - fSize - (idx * lineH),
                 size: fSize,
                 font: font,
-                color: rgb(1, 0, 0)
+                color: rgb(0.9, 0.15, 0.15)
               });
             });
 
-            // Draw bounding cloud rect
-            const lineW = Math.max(...rl.lines.map(l => font.widthOfTextAtSize(l, fSize)));
-            page.drawRectangle({
-              x: rl.x - 15,
-              y: pageHeight - rl.y - (rl.lines.length * fSize * 1.35),
-              width: lineW + 30,
-              height: (rl.lines.length * fSize * 1.35) + 15,
-              borderColor: rgb(1, 0, 0),
-              borderWidth: 1.5
+            // 3. Curved Leader Arrow from note down to the struck-through cell
+            const fromX = nx + 25;
+            const fromY = pageHeight - ny - totalH - pad;
+            const toX = cx + 25;
+            const toY = pageHeight - cy - 4;
+
+            drawPdfLeaderArrow(page, fromX, fromY, toX, toY, rgb(0.9, 0.15, 0.15));
+
+          // B. GENERAL DRAWING NOTES
+          } else if (rl.type === 'note') {
+            const fSize = Math.max(24, rl.fontSize || 24);
+            const lineH = fSize * 1.3;
+            rl.lines.forEach((line, idx) => {
+              page.drawText(line, {
+                x: rl.x,
+                y: pageHeight - rl.y - fSize - (idx * lineH),
+                size: fSize,
+                font: font,
+                color: rgb(0.9, 0.15, 0.15)
+              });
             });
 
-          } else if (rl.type === 'dimension_change' || rl.type === 'specification_change' || rl.type === 'material_change') {
-            const isSpec = rl.type === 'specification_change' || rl.type === 'material_change';
-            const fSize = isSpec ? Math.min(22, Math.max(18, rl.fontSize || 20)) : Math.max(20, rl.fontSize || 24);
+            const lineW = Math.max(...rl.lines.map(l => font.widthOfTextAtSize(l, fSize)));
+            page.drawRectangle({
+              x: rl.x - 16,
+              y: pageHeight - rl.y - (rl.lines.length * lineH) - 16,
+              width: lineW + 32,
+              height: (rl.lines.length * lineH) + 32,
+              borderColor: rgb(0.9, 0.15, 0.15),
+              borderWidth: 2.0
+            });
+
+          // C. DRAWING WINDOW DIMENSION CHANGES
+          } else if (rl.type === 'dimension_change') {
+            const fSize = Math.max(20, rl.fontSize || 24);
             const oldW = font.widthOfTextAtSize(rl.oldValue || '', fSize);
             const newW = font.widthOfTextAtSize(rl.newValue || '', fSize);
 
-            // Cross out line through old text center
+            // Strike-through line through old dimension
             page.drawLine({
               start: { x: rl.x - 4, y: pageHeight - rl.y - fSize * 0.45 },
               end: { x: rl.x + oldW + 4, y: pageHeight - rl.y - fSize * 0.45 },
-              thickness: 1.5,
-              color: rgb(1, 0, 0)
+              thickness: 2.0,
+              color: rgb(0.9, 0.15, 0.15)
             });
 
-            // New text directly above
+            // New dimension text above
             page.drawText(rl.newValue, {
               x: rl.x,
-              y: pageHeight - rl.y + 4,
+              y: pageHeight - rl.y + 6,
               size: fSize,
               font: font,
-              color: rgb(1, 0, 0)
+              color: rgb(0.9, 0.15, 0.15)
             });
 
             // Revision cloud rectangle
             page.drawRectangle({
-              x: rl.x - 10,
-              y: pageHeight - rl.y - fSize - 8,
-              width: Math.max(oldW, newW) + 20,
-              height: fSize * 2.3 + 14,
-              borderColor: rgb(1, 0, 0),
-              borderWidth: 1.5
+              x: rl.x - 12,
+              y: pageHeight - rl.y - fSize - 10,
+              width: Math.max(oldW, newW) + 24,
+              height: fSize * 2.3 + 18,
+              borderColor: rgb(0.9, 0.15, 0.15),
+              borderWidth: 2.0
             });
           }
         });
