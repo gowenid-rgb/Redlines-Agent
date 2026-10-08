@@ -418,9 +418,27 @@
       currentPage: 1,
       zoom: 1.0,
       apiKey: localStorage.getItem('kova_gemini_api_key') || '',
+      isRailwayEnv: false,
       model: localStorage.getItem('kova_gemini_model') || 'gemini-2.5-flash',
       conversationHistory: []
     };
+
+    // Check if Railway environment variable GEMINI_API_KEY is available
+    async function checkServerConfig() {
+      try {
+        const res = await fetch('/api/config');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.hasApiKey) {
+            state.apiKey = data.apiKey;
+            state.isRailwayEnv = true;
+            updateApiKeyStatus();
+          }
+        }
+      } catch (err) {
+        // Local file or static mode
+      }
+    }
 
     // Initialize API Key UI
     function updateApiKeyStatus() {
@@ -431,8 +449,8 @@
       
       if (state.apiKey) {
         dot.className = 'w-2 h-2 rounded-full bg-emerald-400';
-        label.innerText = 'Gemini API Active';
-        if (input) input.value = state.apiKey;
+        label.innerText = state.isRailwayEnv ? 'Gemini API Active (Railway Env)' : 'Gemini API Active';
+        if (input && !input.value) input.value = state.apiKey;
       } else {
         dot.className = 'w-2 h-2 rounded-full bg-amber-400';
         label.innerText = 'Configure API Key';
@@ -440,6 +458,7 @@
       if (select) select.value = state.model;
     }
     updateApiKeyStatus();
+    checkServerConfig();
 
     function toggleApiKeyModal(show) {
       document.getElementById('apiKeyModal').classList.toggle('hidden', !show);
@@ -1001,11 +1020,29 @@ Return strict JSON with this structure:
         }
       };
 
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+      let res;
+      // If hosted on Railway or HTTP server, use the backend proxy
+      if (window.location.protocol.startsWith('http')) {
+        try {
+          res = await fetch(`/api/gemini?model=${state.model}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+        } catch (e) {
+          console.warn("Backend proxy failed, falling back to direct API endpoint", e);
+        }
+      }
+
+      // If running local standalone or proxy returned non-OK, try direct Google URL
+      if (!res || !res.ok) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      }
 
       if (!res.ok) {
         throw new Error(`Gemini API error: ${res.statusText}`);
