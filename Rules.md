@@ -1,83 +1,67 @@
 # PDF Drawing Redline Workflow & Rules
 
-This document outlines the workflow, formatting rules, and technical process for automatically adding redline annotations and specification updates to PDF drawings.
+This document outlines the workflow, formatting rules, PDF layout conventions, and technical process for automatically adding redline annotations and specification updates to engineering drawings.
 
 ---
 
-## 1. Directory Structure
+## 1. Drawing Format & Layout Zones
 
-- **Workspace Folder (`\`)**: Contains the active drawings to process (e.g. `93-020131 REV A.pdf`).
-- **Backup Folder (`\backup\`)**: Holds a copy of the clean, unmodified original drawings.
-- **Output Naming**: The processed drawings are saved as `[part_number] redlines.pdf` (e.g., `93-020131 redlines.pdf`), and the original `REV A` source files are cleared from the main workspace.
+Our engineering drawings follow a standard ANSI D/E format (`2448 x 1584 pt` unscaled):
+
+| Zone | Coordinates (PDF Points) | Contents | Redline Rules |
+| :--- | :--- | :--- | :--- |
+| **Title Block (Bottom Right)** | `x: 1700 - 2400`, `y: 1250 - 1550` | `SPECIFICATION` (Density & IFD), `MATERIAL`, Drawing Number, Part Name, Rev Letter | Old specs/materials crossed out with horizontal line; new text written directly in red bold with revision cloud. **Rev Letter remains UNTOUCHED**. |
+| **Drawing Window (Center)** | `x: 200 - 1700`, `y: 200 - 1200` | Front View, Side View, Isometric Views, Dimension lines, Callouts | Old dimensions crossed out with horizontal line; new dual-unit dimensions written directly above with revision cloud. |
+| **Open Drawing Area (Top Center)** | `x: 800 - 1400`, `y: 100 - 250` | Open space above drawing views | Placement for prominent engineering text notes (e.g. Dacron fiber wrap seam position) with large font (>= 24 pt) and revision cloud. |
+| **Revision History (Top Right)** | `x: 1500 - 2400`, `y: 50 - 180` | ECO#, Zone, Description, Date, Drawn, Approved | Revision bumps & change logs are recorded here. Left empty during preliminary markup. |
+| **General Notes (Bottom Left)** | `x: 50 - 1200`, `y: 1250 - 1500` | Numbered standard notes 1 to 9 | Standard general manufacturing notes. |
 
 ---
 
-## 2. Redlining & Formatting Rules
+## 2. Dimension Identification & Dual Units Standard
 
-All markup is drawn in **Red** (`color = (1, 0, 0)`) to distinguish changes clearly:
+### Identifying Dimensions
+- **Thickness**: Usually the **smallest linear dimension** on the drawing, located on the side view profile (e.g., `101.60 mm = 4.00 in`). Chamfer cutouts/angles (e.g. `2X 38.1 X 30°` containing `X` or `°`) are excluded.
+- **Width & Length**: The primary outer dimensions on the front view (e.g., `812.8 mm` / `825.5 mm` = ~32.0" to 32.5").
+- **Specific Callouts**: When users specify dimensions (e.g. "change from 841mm to 956" or "change 825.5 to 831.9"), search for that numeric value directly on the drawing.
 
-### Specification Blocks (Material Changes)
-- **Cell Layout**: The spec cell (bottom right quadrant, `x > 1700, y > 1300`) contains a small header label `SPECIFICATION` at the top left.
+### Dual Dimensioning Requirement
+All dimension redlines must list **both inches and millimeters**:
+- If specified in inches: format as `{inches}" ({mm} mm)`, e.g., `4.5" (114.3 mm)` or `32.75" (831.9 mm)`.
+- If specified in millimeters: format as `{inches}" ({mm} mm)`, e.g., `37.64" (956.0 mm)`.
+
+---
+
+## 3. Redlining & Formatting Rules
+
+All markup is drawn in **Red** (`#FF0000` / RGB `1.0, 0.0, 0.0`):
+
+### Specification Blocks (Density, IFD & Material)
+- **Location**: Bottom right quadrant (`x > 1700, y > 1300`).
+- **Old Value**: Crossed out with a horizontal red line through text baseline.
+- **New Value**: Written directly above or in place of old value in red bold (font size 18 - 22 pt, e.g. `DENSITY: 1.5 lb/ft³, IFD: 20`).
+- **Revision Cloud**: Wavy revision cloud (`clouds = 2`, `width = 1.5 pt`) surrounds both old crossed-out text and new value.
+
+### Dimensions
 - **Old Value**: Crossed out with a horizontal red line.
-- **New Value**: Placed in the upper-right area of the cell (baseline coordinates `x = 1860.0`, `y = 1374.0`) with a smaller font (`fontsize = 9, fontname = "hebo"` / Helvetica Bold). This prevents the new text from overlapping the `SPECIFICATION` header label.
-- **Revision Cloud**: A rectangular annotation with a wavy cloud border (`clouds = 2`, `width = 1.5`) surrounds both the crossed-out value and the new value.
+- **New Value**: Written in red bold (font size >= 20 pt, typically 24 pt) directly above the old value in dual units.
+- **Revision Cloud**: Wavy revision cloud surrounds both old and new dimension values.
 
-### Dimensions (Dimensional Changes)
-- **Old Value**: Crossed out with a horizontal red line.
-- **New Value**: Written in red bold (`fontsize = 14`, `fontname = "hebo"`) directly above the old value (shifted `8 points` upwards).
-- **Revision Cloud**: A rectangular annotation with a wavy cloud border (`clouds = 2`, `width = 1.5`) surrounds both the crossed-out and the new dimension values.
+### Zero-Ghosting Policy
+- **Strictly User-Requested Changes Only**: Redlines must ONLY be created for items explicitly requested in the user prompt.
+- **No Unprompted Injections**: NEVER generate a 32.75" dimension change or a seam position note unless the user explicitly requested it in their input.
 
-### Revision History & Title Blocks
-- **Revision History Block (Table)**: Left completely empty and unmodified.
-- **Title Block Revision Letter**: Left exactly as-is (e.g., remains `A` with no markings). The support engineering team will determine major or minor revisions.
+### Title Block Revision Letter Protection
+- **Title Block Revision Letter**: Must be left completely untouched. The support engineering team classifies major vs. minor revisions.
 
 ---
 
-## 3. Automation Process (Python & PyMuPDF)
+## 4. Automation Process (Python & Client Engine)
 
-The automation script uses the `pymupdf` (fitz) library. Below is the layout of the processing script:
-
-```python
-import fitz
-import os
-import shutil
-
-workspace_dir = r"."
-filename = "93-020131 REV A.pdf"
-part_no = filename.split(" ")[0]
-
-doc = fitz.open(os.path.join(workspace_dir, filename))
-page = doc[0]
-
-# --- 1. Modify Specification ---
-spec_rect = page.search_for("DENSITY")[0] # Filter for x > 1700, y > 1300
-
-# Cross out
-shape = page.new_shape()
-shape.draw_line(fitz.Point(spec_rect.x0 - 5, spec_rect.y_mid), fitz.Point(spec_rect.x1 + 5, spec_rect.y_mid))
-shape.finish(color=(1, 0, 0), width=1.5)
-shape.commit()
-
-# Write new spec
-page.insert_text(fitz.Point(1860.0, 1374.0), "DENSITY: 1.8 lb/ft³, IFD: 36CA", fontsize=9, fontname="hebo", color=(1, 0, 0))
-
-# Add cloud
-cloud = page.add_rect_annot(fitz.Rect(spec_rect.x0 - 15, 1352.0, spec_rect.x1 + 15, spec_rect.y1 + 10))
-cloud.set_border(width=1.5, clouds=2)
-cloud.set_colors(stroke=(1, 0, 0))
-cloud.update()
-
-# --- 2. Save and Clean up ---
-doc.save(os.path.join(workspace_dir, f"{part_no} redlines.pdf"))
-doc.close()
-os.remove(os.path.join(workspace_dir, filename))
-```
-
----
-
-## 4. Verification Check
-
-Before final approval, visual crops are rendered for:
-1. The **Specification block** (`x: 1700-2100`, `y: 1350-1430`) to verify alignment.
-2. The **Dimension change block** (if applicable) to verify cloud bounds.
-3. The **Title Block Revision letter** to confirm it remains unchanged.
+1. **Extract Text Elements**: Use vector text inspection (`page.get_text('words')` in PyMuPDF or `page.getTextContent()` in PDF.js) to find exact bounding box coordinates of all text and dimensions.
+2. **Locate Target Elements**:
+   - Thickness -> locate smallest linear dimension on side view.
+   - Specs -> locate `DENSITY` / `IFD` / `SPECIFICATION` in bottom-right title block.
+   - Materials -> locate `MATERIAL` in bottom-right title block.
+   - Dimensions -> locate matching numeric values in drawing window.
+3. **Apply Markup**: Strike through old text at its exact coordinates, insert dual-unit text above, and wrap in a wavy revision cloud.

@@ -372,6 +372,21 @@
           <p>&bull; <strong>Backup:</strong> Original unmodified drawings are safely preserved in <code class="text-slate-400">\backup\</code>.</p>
         </div>
 
+        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+          <h4 class="text-purple-400 font-bold uppercase tracking-wider text-[11px]">5. PDF Format & Drawing Zones</h4>
+          <p>&bull; <strong>Title Block (Bottom Right):</strong> Contains <code class="text-slate-200">SPECIFICATION</code> (Density & IFD) and <code class="text-slate-200">MATERIAL</code>. Old specs must be crossed out and updated in this exact cell (<code class="text-slate-400">x: ~1760, y: ~1379</code>).</p>
+          <p>&bull; <strong>Revision History (Top Right):</strong> ECO numbers and rev bumps (<code class="text-slate-400">x: ~1500-2400, y: ~50-180</code>).</p>
+          <p>&bull; <strong>Drawing Window (Center):</strong> Orthographic front view, side view, and geometry dimensions.</p>
+          <p>&bull; <strong>Open Drawing Area (Top Center):</strong> Placement for general revision text notes (<code class="text-slate-400">x: 950, y: 130</code>).</p>
+        </div>
+
+        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+          <h4 class="text-cyan-400 font-bold uppercase tracking-wider text-[11px]">6. Dimension Identification & Dual Units</h4>
+          <p>&bull; <strong>Thickness Dimension:</strong> Always identified as the <strong>smallest linear dimension</strong> on the drawing (typically on the side view, e.g. 101.60 mm = 4.0 in). Chamfers/angles (<code class="text-slate-200">2X 38.1 X 30&deg;</code>) are excluded.</p>
+          <p>&bull; <strong>Dual Units Standard:</strong> All dimension changes must list <strong>both inches and millimeters</strong> (e.g. <code class="text-cyan-300">4.5&quot; (114.3 mm)</code> or <code class="text-cyan-300">32.75&quot; (831.9 mm)</code>).</p>
+          <p>&bull; <strong>Zero-Ghosting Policy:</strong> Only changes explicitly requested in the user prompt are created. No unprompted 32.75&quot; or seam notes are injected.</p>
+        </div>
+
       </div>
       <div class="p-4 border-t border-slate-800 bg-slate-900/90 flex justify-end">
         <button onclick="toggleRulesModal(false)" class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200">Close</button>
@@ -817,33 +832,34 @@
             ctx.fillText(line, nx, ny + idx * (fSize * 1.3));
           });
 
-        } else if (rl.type === 'dimension_change') {
+        } else if (rl.type === 'dimension_change' || rl.type === 'specification_change' || rl.type === 'material_change') {
           const dx = rl.x;
           const dy = rl.y;
-          const fSize = Math.max(20, rl.fontSize || 24);
+          const isSpec = rl.type === 'specification_change' || rl.type === 'material_change';
+          const fSize = isSpec ? Math.min(22, Math.max(18, rl.fontSize || 20)) : Math.max(20, rl.fontSize || 24);
 
           ctx.font = `bold ${fSize}px Helvetica, Arial, sans-serif`;
 
           // Strike-through old value
-          const oldLen = ctx.measureText(rl.oldValue).width;
-          const newLen = ctx.measureText(rl.newValue).width;
+          const oldLen = ctx.measureText(rl.oldValue || '').width || 60;
+          const newLen = ctx.measureText(rl.newValue || '').width || 60;
           const maxLen = Math.max(oldLen, newLen);
 
-          // Red cross-out line
+          // Red cross-out line through old text center
           ctx.strokeStyle = '#E53E3E';
           ctx.lineWidth = 2.5;
           ctx.beginPath();
-          ctx.moveTo(dx - 4, dy - fSize * 0.35);
-          ctx.lineTo(dx + oldLen + 4, dy - fSize * 0.35);
+          ctx.moveTo(dx - 4, dy + fSize * 0.45);
+          ctx.lineTo(dx + oldLen + 4, dy + fSize * 0.45);
           ctx.stroke();
 
-          // Write new text directly above
+          // Write new text directly above the crossed-out text
           ctx.fillStyle = '#E53E3E';
-          ctx.fillText(rl.newValue, dx, dy - fSize * 0.9);
+          ctx.fillText(rl.newValue, dx, dy - 4);
 
           // Wavy revision cloud around both
           const pad = 12;
-          drawWavyCloud(ctx, dx - pad, dy - fSize * 2.0, maxLen + pad * 2, fSize * 2.4);
+          drawWavyCloud(ctx, dx - pad, dy - fSize - 6, maxLen + pad * 2, fSize * 2.3 + 14);
         }
       });
 
@@ -1059,6 +1075,148 @@
       document.getElementById('checkRevisionCloud').innerHTML = `<span class="w-3.5 h-3.5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">&check;</span> <span class="text-slate-200">Wavy Revision Cloud Applied</span>`;
     }
 
+    // Dual Dimensioning Formatter: outputs both inches and mm
+    function formatDualDimension(rawInput) {
+      if (!rawInput) return '';
+      const str = rawInput.toString().trim();
+      
+      // If already formatted with dual units e.g. '4.5" (114.3 mm)', preserve as is
+      if (/\(.*\)/.test(str)) return str;
+
+      const numMatch = str.match(/(\d+(?:\.\d+)?)/);
+      if (!numMatch) return str;
+
+      const num = parseFloat(numMatch[1]);
+      let isInch = false;
+      if (str.includes('"') || /in\b|inch/i.test(str)) {
+        isInch = true;
+      } else if (/mm\b|millimeter/i.test(str)) {
+        isInch = false;
+      } else {
+        // Engineering heuristic: numbers < 60 on these drawings are inches (e.g. 4.5" or 32.75"), >= 60 are mm (e.g. 101.6 or 825.5)
+        isInch = num < 60;
+      }
+
+      if (isInch) {
+        const inches = num;
+        const mm = Math.round(inches * 25.4 * 10) / 10;
+        return `${inches}" (${mm.toFixed(1)} mm)`;
+      } else {
+        const mm = num;
+        const inches = Math.round((mm / 25.4) * 100) / 100;
+        return `${inches}" (${mm.toFixed(1)} mm)`;
+      }
+    }
+
+    // Extract Text & Geometry Landmarks from PDF Vector Page
+    async function extractDrawingElements(fileObj, pageNum = 1) {
+      if (!fileObj || !fileObj.pdfDoc) return null;
+      if (fileObj.elementsCache && fileObj.elementsCache[pageNum]) {
+        return fileObj.elementsCache[pageNum];
+      }
+
+      try {
+        const page = await fileObj.pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.0 });
+        const textContent = await page.getTextContent();
+        const pageW = viewport.width;
+        const pageH = viewport.height;
+
+        const rawItems = textContent.items.map(it => {
+          const [vx, vy] = viewport.convertToViewportPoint(it.transform[4], it.transform[5]);
+          const fontSize = Math.hypot(it.transform[2], it.transform[3]) || it.height || 12;
+          return {
+            str: it.str.trim(),
+            raw: it.str,
+            x: Math.round(vx),
+            y: Math.round(vy - fontSize),
+            baselineY: Math.round(vy),
+            width: Math.round(it.width),
+            height: Math.round(fontSize),
+            fontSize: Math.round(fontSize)
+          };
+        }).filter(it => it.str.length > 0);
+
+        // Group horizontal lines within title block or notes
+        const lines = [];
+        rawItems.forEach(item => {
+          const existing = lines.find(l => Math.abs(l.y - item.y) < 8 && Math.abs(item.x - (l.x + l.width)) < 45);
+          if (existing) {
+            existing.text += ' ' + item.str;
+            existing.width = Math.max(existing.width, (item.x + item.width) - existing.x);
+            existing.items.push(item);
+          } else {
+            lines.push({
+              text: item.str,
+              x: item.x,
+              y: item.y,
+              width: item.width,
+              height: item.height,
+              items: [item]
+            });
+          }
+        });
+
+        // 1. Identify Numeric Dimensions in Main Drawing Window (x < pageW * 0.75, y < pageH * 0.75)
+        const dimensions = [];
+        rawItems.forEach(it => {
+          if (it.y < pageH * 0.75 && it.x < pageW * 0.75 && it.y > pageH * 0.1) {
+            const m = it.str.match(/^(\d+(?:\.\d+)?)$/);
+            if (m) {
+              const val = parseFloat(m[1]);
+              if (val >= 20.0 && val <= 3000.0) {
+                // Check if nearby text contains chamfer/angle annotations ('X', '30°', 'DEG')
+                const nearbyChamfer = lines.find(l => Math.abs(l.y - it.y) < 15 && Math.abs(l.x - it.x) < 80 && /[xX°\^]|deg/i.test(l.text));
+                const isChamfer = Boolean(nearbyChamfer);
+
+                dimensions.push({
+                  value: val,
+                  str: it.str,
+                  x: it.x,
+                  y: it.y,
+                  width: it.width,
+                  height: it.height,
+                  isChamfer: isChamfer
+                });
+              }
+            }
+          }
+        });
+
+        // Filter out chamfers for primary dimensions
+        const linearDims = dimensions.filter(d => !d.isChamfer);
+        linearDims.sort((a, b) => a.value - b.value);
+
+        // THICKNESS: the smallest linear dimension (typically ~75 to ~155 mm / 3" to 6" on side view)
+        let thicknessDim = linearDims.find(d => d.value >= 25.0 && d.value <= 200.0) || (linearDims.length > 0 ? linearDims[0] : null);
+
+        // 2. Identify Title Block Specifications (x > pageW * 0.65, y > pageH * 0.75)
+        const titleBlockLines = lines.filter(l => l.x > pageW * 0.65 && l.y > pageH * 0.75);
+        const specLine = titleBlockLines.find(l => /density|ifd/i.test(l.text)) ||
+                         titleBlockLines.find(l => /specification/i.test(l.text));
+        const materialLine = titleBlockLines.find(l => /polyurethane|material/i.test(l.text));
+
+        const elements = {
+          rawItems,
+          lines,
+          dimensions,
+          linearDims,
+          thicknessDim,
+          specLine,
+          materialLine,
+          pageW,
+          pageH
+        };
+
+        if (!fileObj.elementsCache) fileObj.elementsCache = {};
+        fileObj.elementsCache[pageNum] = elements;
+        return elements;
+      } catch (err) {
+        console.warn("Could not extract PDF text elements", err);
+        return null;
+      }
+    }
+
     // RUN REDLINE GENERATION ENGINE (Offline Rule-Based + Gemini AI)
     async function runRedlineGeneration() {
       if (state.files.length === 0) {
@@ -1066,28 +1224,29 @@
         return;
       }
 
+      // CRITICAL: CLEAR ALL PREVIOUS REDLINES FIRST TO ELIMINATE GHOSTING
+      state.files.forEach(f => f.redlines = []);
+
       const context = document.getElementById('contextInput').value.trim();
       const btn = document.getElementById('generateBtn');
       const btnText = document.getElementById('generateBtnText');
       const icon = document.getElementById('generateIcon');
 
       btn.disabled = true;
-      btnText.innerText = "Analyzing Drawings & Applying Rules...";
+      btnText.innerText = "Analyzing Drawings & Locating Features...";
       icon.classList.add('animate-spin');
 
       try {
-        // If Gemini API Key is provided, we can ask Gemini for complex instructions
         if (state.apiKey) {
           try {
             await executeGeminiAiRedlines(context);
           } catch (aiErr) {
             console.warn("AI API call failed or timed out, executing deterministic rule engine fallback", aiErr);
-            executeDeterministicRedlines(context);
+            await executeDeterministicRedlines(context);
           }
         } else {
-          // Execute Deterministic Engineering Rules Engine
-          await new Promise(r => setTimeout(r, 600)); // Smooth UI transition
-          executeDeterministicRedlines(context);
+          await new Promise(r => setTimeout(r, 400));
+          await executeDeterministicRedlines(context);
         }
 
         // Render current drawing
@@ -1105,84 +1264,222 @@
     }
 
     // Deterministic Engineering Redlines Engine (Based on Rules.md)
-    function executeDeterministicRedlines(context) {
+    async function executeDeterministicRedlines(context) {
       const lowerContext = context.toLowerCase();
-      const isSizeUpdate = lowerContext.includes('size') || lowerContext.includes('32.75') || lowerContext.includes('soft');
-      const isSeamMove = lowerContext.includes('seam') || lowerContext.includes('bottom face') || lowerContext.includes('dacron') || lowerContext.includes('fiber');
+      const activeFile = state.files.find(f => f.id === state.activeFileId) || state.files[0];
+      if (!activeFile) return;
 
-      state.files.forEach(f => {
-        f.redlines = [];
+      const elements = await extractDrawingElements(activeFile, state.currentPage);
 
-        // 1. Core Foam Drawings (93-027231 Box, 93-027238 Flange)
-        if (f.isCore) {
-          if (isSizeUpdate) {
-            // Apply 825.5 -> 831.9 size increase (two dimensions)
-            f.redlines.push({
-              type: 'dimension_change',
-              oldValue: '825.5',
-              newValue: '831.9',
-              x: f.partNo === '93-027231' ? 985 : 519,
-              y: f.partNo === '93-027231' ? 320 : 610,
-              fontSize: 24,
-              cloud: true
-            });
-            f.redlines.push({
-              type: 'dimension_change',
-              oldValue: '825.5',
-              newValue: '831.9',
-              x: f.partNo === '93-027231' ? 1430 : 815,
-              y: f.partNo === '93-027231' ? 755 : 330,
-              fontSize: 24,
-              cloud: true
-            });
+      // 1. Thickness Change: "Change the thickness of the foam piece to 4.5"
+      if (lowerContext.includes('thickness')) {
+        const match = lowerContext.match(/thickness[^\d]*(\d+(?:\.\d+)?)\s*(?:in|inch|inches|mm|")?/i);
+        const targetVal = match ? match[1] : "4.5";
+        const formattedNew = formatDualDimension(targetVal);
+
+        if (elements && elements.thicknessDim) {
+          activeFile.redlines.push({
+            type: 'dimension_change',
+            target: 'thickness',
+            oldValue: elements.thicknessDim.str,
+            newValue: formattedNew,
+            x: elements.thicknessDim.x,
+            y: elements.thicknessDim.y,
+            fontSize: 24,
+            cloud: true
+          });
+        } else {
+          activeFile.redlines.push({
+            type: 'dimension_change',
+            target: 'thickness',
+            oldValue: "101.60",
+            newValue: formattedNew,
+            x: 1368,
+            y: 316,
+            fontSize: 24,
+            cloud: true
+          });
+        }
+      }
+
+      // 2. Specification / IFD / Density Change: "Change the IFD and Density to 1.5/20"
+      if (lowerContext.includes('ifd') || lowerContext.includes('density') || lowerContext.includes('spec')) {
+        let newSpecStr = "DENSITY: 1.5 lb/ft³, IFD: 20";
+        const ratioMatch = context.match(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
+        if (ratioMatch) {
+          newSpecStr = `DENSITY: ${ratioMatch[1]} lb/ft³, IFD: ${ratioMatch[2]}`;
+        } else {
+          const densMatch = lowerContext.match(/density[^\d]*(\d+(?:\.\d+)?)/i);
+          const ifdMatch = lowerContext.match(/ifd[^\d]*(\d+(?:\.\d+)?)/i);
+          if (densMatch && ifdMatch) {
+            newSpecStr = `DENSITY: ${densMatch[1]} lb/ft³, IFD: ${ifdMatch[1]}`;
           }
-        } 
-        // 2. Assembly & Fiber Wrap Drawings (seam note ONLY)
-        else {
-          if (isSeamMove) {
-            f.redlines.push({
-              type: 'note',
-              lines: [
-                "THE SEAM OF THE DACRON (FIBER) WRAP TO BE",
-                "LOCATED ON THE BOTTOM FACE OF THE CUSHION"
-              ],
-              x: 950,
-              y: 130,
-              fontSize: 24,
-              cloud: true
+        }
+
+        if (elements && elements.specLine) {
+          activeFile.redlines.push({
+            type: 'specification_change',
+            target: 'specification',
+            oldValue: elements.specLine.text,
+            newValue: newSpecStr,
+            x: elements.specLine.x,
+            y: elements.specLine.y,
+            fontSize: 20,
+            cloud: true
+          });
+        } else {
+          activeFile.redlines.push({
+            type: 'specification_change',
+            target: 'specification',
+            oldValue: "DENSITY: 2.5 lb/ft³, IFD: 28 HR",
+            newValue: newSpecStr,
+            x: 1760,
+            y: 1379,
+            fontSize: 20,
+            cloud: true
+          });
+        }
+      }
+
+      // 3. Material Change in Title Block
+      if (lowerContext.includes('material') && !lowerContext.includes('ifd') && !lowerContext.includes('density')) {
+        const matMatch = context.match(/material\s+(?:to\s+|is\s+)?([A-Za-z0-9\s]+)/i);
+        const newMat = matMatch ? matMatch[1].trim() : "POLYURETHANE FOAM";
+        const oldMat = elements && elements.materialLine ? elements.materialLine.text : "POLYURETHANE FOAM";
+        const xPos = elements && elements.materialLine ? elements.materialLine.x : 1760;
+        const yPos = elements && elements.materialLine ? elements.materialLine.y : 1322;
+
+        activeFile.redlines.push({
+          type: 'material_change',
+          target: 'material',
+          oldValue: oldMat,
+          newValue: newMat.toUpperCase(),
+          x: xPos,
+          y: yPos,
+          fontSize: 20,
+          cloud: true
+        });
+      }
+
+      // 4. Explicit Dimension Callouts (e.g. "change from 841mm to 956" or "825.5 to 831.9")
+      const changeMatch = context.match(/change\s+(?:from\s+)?(\d+(?:\.\d+)?)\s*(?:mm|in)?\s+to\s+(\d+(?:\.\d+)?)\s*(?:mm|in)?/i);
+      if (changeMatch) {
+        const oldVal = changeMatch[1];
+        const newVal = changeMatch[2];
+        const dualNew = formatDualDimension(newVal);
+
+        if (elements && elements.dimensions) {
+          const matched = elements.dimensions.filter(d => Math.abs(d.value - parseFloat(oldVal)) < 2.0);
+          if (matched.length > 0) {
+            matched.forEach(d => {
+              activeFile.redlines.push({
+                type: 'dimension_change',
+                oldValue: d.str,
+                newValue: dualNew,
+                x: d.x,
+                y: d.y,
+                fontSize: 24,
+                cloud: true
+              });
             });
           }
         }
-      });
+      }
+
+      // 5. Cushion Size 32.75" (ONLY if explicitly mentioned in context!)
+      if (lowerContext.includes('32.75') || (lowerContext.includes('soft') && lowerContext.includes('size'))) {
+        const dual32 = '32.75" (831.9 mm)';
+        if (elements && elements.dimensions) {
+          const coreDims = elements.dimensions.filter(d => Math.abs(d.value - 825.5) < 3.0 || Math.abs(d.value - 812.8) < 3.0);
+          coreDims.forEach(d => {
+            activeFile.redlines.push({
+              type: 'dimension_change',
+              oldValue: d.str,
+              newValue: dual32,
+              x: d.x,
+              y: d.y,
+              fontSize: 24,
+              cloud: true
+            });
+          });
+        }
+      }
+
+      // 6. Dacron Seam Note (ONLY if explicitly mentioned in context!)
+      if (lowerContext.includes('seam') || lowerContext.includes('bottom face')) {
+        activeFile.redlines.push({
+          type: 'note',
+          lines: [
+            "THE SEAM OF THE DACRON (FIBER) WRAP TO BE",
+            "LOCATED ON THE BOTTOM FACE OF THE CUSHION"
+          ],
+          x: 950,
+          y: 130,
+          fontSize: 24,
+          cloud: true
+        });
+      }
     }
 
     // Google Gemini API Redline Assistant
     async function executeGeminiAiRedlines(userPrompt) {
+      const activeFile = state.files.find(f => f.id === state.activeFileId) || state.files[0];
+      const elements = activeFile ? await extractDrawingElements(activeFile, state.currentPage) : null;
+
+      const detectedSummary = elements ? {
+        dimensions_on_sheet: elements.dimensions.map(d => ({
+          value_mm: d.value,
+          text: d.str,
+          x: d.x,
+          y: d.y,
+          is_thickness: d === elements.thicknessDim
+        })),
+        title_block_specification: elements.specLine ? {
+          text: elements.specLine.text,
+          x: elements.specLine.x,
+          y: elements.specLine.y
+        } : { text: "DENSITY: 2.5 lb/ft³, IFD: 28 HR", x: 1760, y: 1379 },
+        title_block_material: elements.materialLine ? {
+          text: elements.materialLine.text,
+          x: elements.materialLine.x,
+          y: elements.materialLine.y
+        } : { text: "POLYURETHANE FOAM", x: 1760, y: 1322 },
+        drawing_zones: {
+          title_block_specs: "Bottom right (x: ~1760, y: ~1379)",
+          open_notes_area: "Top center (x: 950, y: 130)",
+          thickness_side_view: elements.thicknessDim ? `x: ${elements.thicknessDim.x}, y: ${elements.thicknessDim.y}` : "Side view"
+        }
+      } : {};
+
       const systemPrompt = `You are an expert manufacturing CAD drawing redline specialist following Rules.md:
 1. Markup Color: Pure Red (#FF0000).
-2. Large font size: 24 pt or higher for notes and dimensions.
+2. Large font size: 24 pt or higher (20 pt for title block specifications).
 3. Revision clouds: wavy cloud border surrounds both strike-through and new values.
 4. Title block revision letter: MUST BE LEFT UNTOUCHED.
-5. Soft Cushion Rule: Size increases to 32.75" (831.9 mm) are applied ONLY to soft foam cores (parts 231 and 238).
-6. Dacron Wrap Seam Rule: Note "THE SEAM OF THE DACRON (FIBER) WRAP TO BE LOCATED ON THE BOTTOM FACE OF THE CUSHION" applies to assembly and fiber drawings only.
+5. ZERO GHOST REDLINES / CRITICAL RULE: ONLY generate modifications that the user EXPLICITLY requested in their prompt. DO NOT invent or carry over unrequested modifications (such as 32.75" or seam relocation) unless the user explicitly requested them in the change request.
+6. PDF Layout Knowledge:
+   - THICKNESS: Thickness is usually the smallest linear dimension on the drawing (located on the side view). Match the coordinates of the detected thickness dimension!
+   - TITLE BLOCK SPECS: IFD, Density, and material specifications live in the bottom-right title block SPECIFICATION cell (x: ~1760, y: ~1379). Point to and strike through the old spec, writing the new spec in its place.
+   - DUAL UNITS STANDARD: All dimension redlines must list BOTH inches and millimeters (e.g. 4.5" [114.3 mm] or 37.64" [956.0 mm]).
+   - GENERAL NOTES: Prominent revision notes go in the open drawing area (x: 950, y: 130).
 
 Return strict JSON with this structure:
 {
   "modifications": [
     {
-      "partNo": "93-027231",
-      "type": "dimension_change" | "note",
-      "oldValue": "825.5",
-      "newValue": "831.9",
+      "partNo": "${activeFile ? activeFile.partNo : 'current'}",
+      "type": "dimension_change" | "specification_change" | "material_change" | "note",
+      "target": "thickness" | "width" | "specification" | "material" | "note",
+      "oldValue": "101.60",
+      "newValue": "4.5\\" (114.3 mm)",
       "lines": ["line 1", "line 2"],
       "fontSize": 24,
-      "x": 985,
-      "y": 320
+      "x": 1368,
+      "y": 316
     }
   ]
 }`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
       const payload = {
         contents: [
           {
@@ -1190,6 +1487,7 @@ Return strict JSON with this structure:
             parts: [
               { text: systemPrompt },
               { text: `Drawing parts loaded: ${state.files.map(f => f.partNo).join(', ')}` },
+              { text: `Detected Sheet Elements: ${JSON.stringify(detectedSummary)}` },
               { text: `User Change Request: ${userPrompt}` }
             ]
           }
@@ -1201,7 +1499,6 @@ Return strict JSON with this structure:
       };
 
       let res;
-      // If hosted on Railway or HTTP server, use the backend proxy
       if (window.location.protocol.startsWith('http')) {
         try {
           res = await fetch(`/api/gemini?model=${state.model}`, {
@@ -1217,7 +1514,6 @@ Return strict JSON with this structure:
         }
       }
 
-      // If running local standalone or proxy returned non-OK, try direct Google URL
       if (!res || !res.ok) {
         const directModel = (state.model === 'gemini-3-flash' || state.model.includes('2.5-flash') || state.model.includes('1.5-flash')) 
           ? 'gemini-3-flash-preview' 
@@ -1240,16 +1536,49 @@ Return strict JSON with this structure:
         const parsed = JSON.parse(rawText);
         if (parsed.modifications && Array.isArray(parsed.modifications)) {
           parsed.modifications.forEach(mod => {
-            const matchedFile = state.files.find(f => f.partNo.includes(mod.partNo) || mod.partNo.includes(f.partNo));
-            if (matchedFile) {
-              matchedFile.redlines.push(mod);
+            const matchedFile = state.files.find(f => f.partNo.includes(mod.partNo) || mod.partNo.includes(f.partNo)) || activeFile;
+            if (!matchedFile) return;
+
+            // Intelligent coordinate snapping & formatting
+            if (mod.target === 'thickness' || /thickness/i.test(mod.oldValue || '') || /thickness/i.test(mod.newValue || '')) {
+              if (elements && elements.thicknessDim) {
+                mod.x = elements.thicknessDim.x;
+                mod.y = elements.thicknessDim.y;
+                mod.oldValue = elements.thicknessDim.str;
+              }
+              mod.newValue = formatDualDimension(mod.newValue);
+              mod.type = 'dimension_change';
+            } else if (mod.target === 'specification' || /density|ifd|spec/i.test(mod.newValue || '') || /density|ifd|spec/i.test(mod.oldValue || '')) {
+              if (elements && elements.specLine) {
+                mod.x = elements.specLine.x;
+                mod.y = elements.specLine.y;
+                mod.oldValue = elements.specLine.text;
+              } else {
+                mod.x = 1760;
+                mod.y = 1379;
+              }
+              mod.type = 'specification_change';
+              mod.fontSize = Math.min(24, Math.max(18, mod.fontSize || 20));
+            } else if (mod.type === 'dimension_change') {
+              mod.newValue = formatDualDimension(mod.newValue);
+              if (elements && elements.dimensions) {
+                const match = elements.dimensions.find(d => Math.abs(d.value - parseFloat(mod.oldValue)) < 2.0);
+                if (match) {
+                  mod.x = match.x;
+                  mod.y = match.y;
+                  mod.oldValue = match.str;
+                }
+              }
             }
+
+            matchedFile.redlines.push(mod);
           });
           return;
         }
       }
-      // If AI returned unexpected format, fallback
-      executeDeterministicRedlines(userPrompt);
+
+      // Fallback to local engine
+      await executeDeterministicRedlines(userPrompt);
     }
 
     // Re-Prompt Iteration Function
@@ -1265,27 +1594,25 @@ Return strict JSON with this structure:
       const file = state.files.find(f => f.id === state.activeFileId);
       const lower = text.toLowerCase();
 
-      // Check if user is asking to add a note or change font size
+      // Check if user is asking to change font size of existing redlines
       if (lower.includes('font size') || lower.includes('pt')) {
         const match = lower.match(/(\d+)\s*(pt)?/);
         const newSize = match ? parseInt(match[1]) : 28;
         if (file) {
           file.redlines.forEach(rl => rl.fontSize = newSize);
         }
-      } else if (lower.includes('missed') || lower.includes('note') || lower.includes('ifd')) {
+      } else if (lower.includes('remove') || lower.includes('delete') || lower.includes('ghost')) {
         if (file) {
-          file.redlines.push({
-            type: 'note',
-            lines: [
-              "NOTE: IFD/DENSITY COMPONENT UPDATE",
-              "PER ENGINEERING RE-PROMPT INSTRUCTION"
-            ],
-            x: 950,
-            y: 240,
-            fontSize: 24,
-            cloud: true
-          });
+          if (lower.includes('32.75') || lower.includes('size')) {
+            file.redlines = file.redlines.filter(rl => !rl.newValue.includes('32.75'));
+          } else {
+            file.redlines = [];
+          }
         }
+      } else {
+        const combinedPrompt = document.getElementById('contextInput').value.trim() + "\n" + text;
+        document.getElementById('contextInput').value = combinedPrompt;
+        await runRedlineGeneration();
       }
 
       input.value = '';
@@ -1339,23 +1666,24 @@ Return strict JSON with this structure:
               borderWidth: 1.5
             });
 
-          } else if (rl.type === 'dimension_change') {
-            const fSize = Math.max(20, rl.fontSize || 24);
-            const oldW = font.widthOfTextAtSize(rl.oldValue, fSize);
-            const newW = font.widthOfTextAtSize(rl.newValue, fSize);
+          } else if (rl.type === 'dimension_change' || rl.type === 'specification_change' || rl.type === 'material_change') {
+            const isSpec = rl.type === 'specification_change' || rl.type === 'material_change';
+            const fSize = isSpec ? Math.min(22, Math.max(18, rl.fontSize || 20)) : Math.max(20, rl.fontSize || 24);
+            const oldW = font.widthOfTextAtSize(rl.oldValue || '', fSize);
+            const newW = font.widthOfTextAtSize(rl.newValue || '', fSize);
 
-            // Cross out line
+            // Cross out line through old text center
             page.drawLine({
-              start: { x: rl.x - 4, y: pageHeight - rl.y + fSize * 0.3 },
-              end: { x: rl.x + oldW + 4, y: pageHeight - rl.y + fSize * 0.3 },
+              start: { x: rl.x - 4, y: pageHeight - rl.y - fSize * 0.45 },
+              end: { x: rl.x + oldW + 4, y: pageHeight - rl.y - fSize * 0.45 },
               thickness: 1.5,
               color: rgb(1, 0, 0)
             });
 
-            // New text above
+            // New text directly above
             page.drawText(rl.newValue, {
               x: rl.x,
-              y: pageHeight - rl.y + fSize * 0.9,
+              y: pageHeight - rl.y + 4,
               size: fSize,
               font: font,
               color: rgb(1, 0, 0)
@@ -1364,9 +1692,9 @@ Return strict JSON with this structure:
             // Revision cloud rectangle
             page.drawRectangle({
               x: rl.x - 10,
-              y: pageHeight - rl.y - 10,
+              y: pageHeight - rl.y - fSize - 8,
               width: Math.max(oldW, newW) + 20,
-              height: fSize * 2.2,
+              height: fSize * 2.3 + 14,
               borderColor: rgb(1, 0, 0),
               borderWidth: 1.5
             });
