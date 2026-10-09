@@ -149,11 +149,7 @@
             </div>
           </div>
           
-          <textarea id="contextInput" rows="5" placeholder="Enter engineering change instructions across all loaded drawings. Examples:
-- All of these cushions are changing in dimension to 31&quot;x31&quot;x4.5&quot;. Soft spec is 1.9/30, medium is 2.0/31, firm is 2.5/35.
-- Change material to 6061-T6 Aluminum, finish to Black Anodize Type III. Add note: BREAK ALL SHARP EDGES.
-- Increase mounting flange diameter from 150mm to 165mm across all models.
-- For Grade A panels, change thickness to 0.75&quot; and core to Baltic Birch." 
+          <textarea id="contextInput" rows="5" placeholder="Describe the changes to apply across drawings (e.g. dimensions, materials, specifications, notes)..." 
             class="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 font-mono transition"></textarea>
 
           <!-- Rules Summary Badges -->
@@ -620,15 +616,6 @@
         const elem = f.elementsCache ? f.elementsCache[1] : null;
         const displayTitle = f.drawingTitle || elem?.drawingTitle || f.name;
         const redlineCount = f.redlines ? f.redlines.length : 0;
-        
-        let attrBadge = '';
-        if (elem && elem.detectedFields) {
-          const keyField = elem.detectedFields['MATERIAL'] || elem.detectedFields['FINISH'] || elem.detectedFields['SPECIFICATION'];
-          if (keyField && keyField.value) {
-            const shortVal = keyField.value.length > 18 ? keyField.value.substring(0, 16) + '...' : keyField.value;
-            attrBadge = `<span class="px-1.5 py-0.5 rounded border text-[9px] font-mono bg-blue-500/10 text-blue-400 border-blue-500/20 truncate max-w-[120px]">${shortVal}</span>`;
-          }
-        }
 
         return `
         <div onclick="selectActiveDrawing('${f.id}')" class="p-2 rounded-lg border text-xs flex items-center justify-between cursor-pointer transition ${state.activeFileId === f.id ? 'bg-red-500/10 border-red-500/40 text-white shadow-sm' : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-900'}">
@@ -639,9 +626,8 @@
               </svg>
             </span>
             <div class="truncate">
-              <div class="font-medium truncate flex items-center gap-1.5">
+              <div class="font-medium truncate">
                 <span class="truncate">${displayTitle}</span>
-                ${attrBadge}
               </div>
               <div class="text-[10px] text-slate-500 font-mono flex items-center gap-2">
                 <span>Part: ${f.partNo}</span>
@@ -2340,6 +2326,8 @@ Return strict JSON with this exact structure:
         state.files = [];
         state.activeFileId = null;
         state.currentPage = 1;
+        const ctxInput = document.getElementById('contextInput');
+        if (ctxInput) ctxInput.value = '';
         renderFileList();
         updateFileSelectDropdown();
         clearViewer();
@@ -2414,8 +2402,7 @@ Return strict JSON with this exact structure:
       }
     }
 
-    // Auto-populate default prompt & initialize viewer
-    applyPreset('cushion_batch');
+    // Initialize viewer interactions (context input starts clean and empty)
     initViewerInteractions();
   </script>
 </body>
