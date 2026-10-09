@@ -12,6 +12,9 @@
   <script src="pdf-lib.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <!-- JSZip for batch zip export (Local bundled + CDN fallback) -->
+  <script src="jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -136,9 +139,11 @@
             <label class="block text-xs font-semibold text-slate-300">Context Window (Describe Changes)</label>
             <div class="flex items-center gap-1">
               <span class="text-[11px] text-slate-500">Presets:</span>
-              <button onclick="applyPreset('cushion_825')" class="text-[11px] text-red-400 hover:underline">8.25 Cushions</button>
+              <button onclick="applyPreset('batch_firmness')" class="text-[11px] text-red-400 hover:underline font-medium">Batch 31"x31"x4.5"</button>
               <span class="text-slate-600">·</span>
-              <button onclick="applyPreset('seam_note')" class="text-[11px] text-red-400 hover:underline">Seam Move</button>
+              <button onclick="applyPreset('cushion_825')" class="text-[11px] text-slate-400 hover:underline">8.25 Cushions</button>
+              <span class="text-slate-600">·</span>
+              <button onclick="applyPreset('seam_note')" class="text-[11px] text-slate-400 hover:underline">Seam Move</button>
             </div>
           </div>
           
@@ -214,11 +219,18 @@
             100%
           </button>
 
-          <button onclick="downloadActiveRedline()" id="downloadBtn" class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-medium shadow transition">
+          <button onclick="downloadActiveRedline()" id="downloadBtn" class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-medium border border-slate-700 shadow transition" title="Download active redlined drawing">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
             </svg>
-            <span class="hidden sm:inline">Download</span> PDF
+            <span>Download PDF</span>
+          </button>
+
+          <button onclick="downloadAllRedlinesZip()" id="downloadAllBtn" class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-medium shadow transition" title="Download all batch redlined drawings as a ZIP">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+            </svg>
+            <span>Download All (ZIP)</span>
           </button>
         </div>
       </div>
@@ -580,6 +592,7 @@
             const loadingTask = pdfjsLib.getDocument({ data: fileObj.pdfBytes.slice(0) });
             fileObj.pdfDoc = await loadingTask.promise;
             fileObj.numPages = fileObj.pdfDoc.numPages;
+            await extractDrawingElements(fileObj, 1);
           } catch (err) {
             console.error('PDF.js load error for ' + file.name, err);
           }
@@ -605,22 +618,38 @@
         return;
       }
 
-      listContainer.innerHTML = state.files.map(f => `
-        <div onclick="selectActiveDrawing('${f.id}')" class="p-2 rounded-lg border text-xs flex items-center justify-between cursor-pointer transition ${state.activeFileId === f.id ? 'bg-red-500/10 border-red-500/40 text-white' : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-900'}">
+      listContainer.innerHTML = state.files.map(f => {
+        const elem = f.elementsCache ? f.elementsCache[1] : null;
+        const firmness = f.firmness || elem?.firmness;
+        const hasFirmness = firmness && firmness !== 'UNKNOWN';
+        const firmnessColor = firmness === 'SOFT' ? 'bg-sky-500/15 text-sky-400 border-sky-500/30' :
+                              firmness === 'MEDIUM' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' :
+                              firmness === 'FIRM' ? 'bg-purple-500/15 text-purple-400 border-purple-500/30' : '';
+        const redlineCount = f.redlines ? f.redlines.length : 0;
+
+        return `
+        <div onclick="selectActiveDrawing('${f.id}')" class="p-2 rounded-lg border text-xs flex items-center justify-between cursor-pointer transition ${state.activeFileId === f.id ? 'bg-red-500/10 border-red-500/40 text-white shadow-sm' : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-900'}">
           <div class="flex items-center space-x-2 truncate">
-            <span class="w-5 h-5 rounded bg-slate-800 flex items-center justify-center text-[10px] font-mono text-red-400">
+            <span class="w-5 h-5 rounded bg-slate-800 flex items-center justify-center text-[10px] font-mono text-red-400 shrink-0">
               ${f.isCore ? 'COR' : (f.isWrap ? 'WRP' : 'ASY')}
             </span>
             <div class="truncate">
-              <div class="font-medium truncate">${f.name}</div>
-              <div class="text-[10px] text-slate-500 font-mono">Part: ${f.partNo} · ${f.numPages} pgs</div>
+              <div class="font-medium truncate flex items-center gap-1.5">
+                <span class="truncate">${f.name}</span>
+                ${hasFirmness ? `<span class="px-1 py-0.2 rounded border text-[9px] font-mono ${firmnessColor}">${firmness}</span>` : ''}
+              </div>
+              <div class="text-[10px] text-slate-500 font-mono flex items-center gap-2">
+                <span>Part: ${f.partNo}</span>
+                ${redlineCount > 0 ? `<span class="text-red-400 font-bold">• ${redlineCount} redlines</span>` : ''}
+              </div>
             </div>
           </div>
-          <button onclick="removeFile(event, '${f.id}')" class="p-1 hover:text-red-400 text-slate-600 transition" title="Remove">
+          <button onclick="removeFile(event, '${f.id}')" class="p-1 hover:text-red-400 text-slate-600 transition shrink-0" title="Remove">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
 
     function updateFileSelectDropdown() {
@@ -663,7 +692,9 @@
     // Presets
     function applyPreset(type) {
       const ctx = document.getElementById('contextInput');
-      if (type === 'cushion_825') {
+      if (type === 'batch_firmness') {
+        ctx.value = "All of these cushions are changing in dimension to 31\"x31\"x4.5\"\n\nThe \"soft\" specification is: 1.9/30\nThe \"medium\" is: 2.0/31\nThe \"firm\" is: 2.5/35";
+      } else if (type === 'cushion_825') {
         ctx.value = "1. The SOFT cushion for both Box and Flange has had its size increased to 32.75\" (approx. 831.9 mm, medium and firm remain the same). Apply this size increase ONLY to the foam cores (parts 231 and 238).\n2. The SEAM of the dacron (fiber) wrap will be moved to the BOTTOM FACE of both the box and flange cushions (write as a text note on the assembly & wrap drawings, ensure font size is large: 24 or more).";
       } else if (type === 'seam_note') {
         ctx.value = "The SEAM of the dacron (fiber) wrap will be moved to the BOTTOM FACE of both the box and flange cushions. Add as a prominent red text note on all assembly and wrap drawings (font size 24 or more) surrounded by a revision cloud.";
@@ -1281,11 +1312,40 @@
         // THICKNESS: the smallest linear dimension (typically ~75 to ~155 mm / 3" to 6" on side view)
         let thicknessDim = linearDims.find(d => d.value >= 25.0 && d.value <= 200.0) || (linearDims.length > 0 ? linearDims[0] : null);
 
+        // WIDTH & LENGTH: the primary planar cushion dimensions (typically 500 to 1500 mm / 20" to 60")
+        const widthLengthDims = linearDims.filter(d => d.value >= 400.0 && d.value <= 2000.0 && d !== thicknessDim);
+
         // 2. Identify Title Block Specifications (x > pageW * 0.65, y > pageH * 0.75)
         const titleBlockLines = lines.filter(l => l.x > pageW * 0.65 && l.y > pageH * 0.75);
         const specLine = titleBlockLines.find(l => /density|ifd/i.test(l.text)) ||
                          titleBlockLines.find(l => /specification/i.test(l.text));
         const materialLine = titleBlockLines.find(l => /polyurethane|material/i.test(l.text));
+
+        // 3. Extract Drawing Title and Firmness / Cushion Type
+        const fullSheetText = lines.map(l => l.text).join(' ');
+        let firmness = 'UNKNOWN';
+        if (/\bsoft\b/i.test(fullSheetText) || /ifd:\s*24/i.test(fullSheetText)) {
+          firmness = 'SOFT';
+        } else if (/\bmedium\b/i.test(fullSheetText) || /ifd:\s*28/i.test(fullSheetText)) {
+          firmness = 'MEDIUM';
+        } else if (/\bfirm\b/i.test(fullSheetText) || /ifd:\s*(?:42|35)/i.test(fullSheetText)) {
+          firmness = 'FIRM';
+        }
+
+        let cushionType = 'CORE';
+        if (/\bflange\b/i.test(fullSheetText)) {
+          cushionType = 'FLANGE';
+        } else if (/\bbox\b/i.test(fullSheetText)) {
+          cushionType = 'BOX';
+        }
+
+        const titleLine = lines.find(l => /cushion\s+core|foam,\s+seat/i.test(l.text)) ||
+                          lines.find(l => /foam|cushion/i.test(l.text));
+        const titleText = titleLine ? titleLine.text.trim() : (fileObj.name || fileObj.partNo);
+
+        fileObj.firmness = firmness;
+        fileObj.titleText = titleText;
+        fileObj.cushionType = cushionType;
 
         const elements = {
           rawItems,
@@ -1293,8 +1353,12 @@
           dimensions,
           linearDims,
           thicknessDim,
+          widthLengthDims,
           specLine,
           materialLine,
+          firmness,
+          cushionType,
+          titleText,
           pageW,
           pageH
         };
@@ -1354,128 +1418,178 @@
       }
     }
 
-    // Deterministic Engineering Redlines Engine (Based on Rules.md)
+    // Deterministic Engineering Redlines Engine (Processes Entire Batch of Drawings)
     async function executeDeterministicRedlines(context) {
       const lowerContext = context.toLowerCase();
-      const activeFile = state.files.find(f => f.id === state.activeFileId) || state.files[0];
-      if (!activeFile) return;
+      if (state.files.length === 0) return;
 
-      const elements = await extractDrawingElements(activeFile, state.currentPage);
+      // 1. Parse 3D / Bounding Dimensions (e.g. 31"x31"x4.5" or 31 x 31 x 4.5)
+      let targetWL = null;
+      let targetThick = null;
 
-      // 1. Thickness Change: "Change the thickness of the foam piece to 4.5"
-      if (lowerContext.includes('thickness')) {
-        const match = lowerContext.match(/thickness[^\d]*(\d+(?:\.\d+)?)\s*(?:in|inch|inches|mm|")?/i);
-        const targetVal = match ? match[1] : "4.5";
-        const formattedNew = formatDualDimension(targetVal);
+      const dim3dMatch = context.match(/(\d+(?:\.\d+)?)\s*(?:["”]|in)?\s*(?:[xX*]|by)\s*(\d+(?:\.\d+)?)\s*(?:["”]|in)?\s*(?:[xX*]|by)\s*(\d+(?:\.\d+)?)\s*(?:["”]|in)?/i);
+      if (dim3dMatch) {
+        const d1 = parseFloat(dim3dMatch[1]);
+        const d2 = parseFloat(dim3dMatch[2]);
+        const d3 = parseFloat(dim3dMatch[3]);
+        targetThick = Math.min(d1, d2, d3).toString();
+        targetWL = Math.max(d1, d2, d3).toString();
+      } else {
+        const thMatch = lowerContext.match(/thickness[^\d]*(\d+(?:\.\d+)?)/i);
+        if (thMatch) targetThick = thMatch[1];
+      }
 
-        if (elements && elements.thicknessDim) {
-          activeFile.redlines.push({
+      const formattedThick = targetThick ? formatDualDimension(targetThick) : null;
+      const formattedWL = targetWL ? formatDualDimension(targetWL) : null;
+
+      // 2. Parse Firmness-Specific Specifications
+      // Soft specification: e.g. 'The "soft" specification is: 1.9/30' or 'soft: 1.9/30'
+      let softSpec = null;
+      const softMatch = context.match(/(?:soft|“soft”|"soft")[^:\d\n]*[:\s=is]+[^\d\n]*(\d+(?:\.\d+)?)\s*(?:\/|\s+and\s+|\s+)?\s*(\d+(?:\.\d+)?)/i) ||
+                        context.match(/soft[^\n\d]*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/i);
+      if (softMatch) {
+        softSpec = `DENSITY: ${softMatch[1]} lb/ft³, IFD: ${softMatch[2]}`;
+      }
+
+      // Medium specification: e.g. 'The "medium" is: 2.0/31' or 'medium: 2.0/31'
+      let mediumSpec = null;
+      const medMatch = context.match(/(?:medium|“medium”|"medium")[^:\d\n]*[:\s=is]+[^\d\n]*(\d+(?:\.\d+)?)\s*(?:\/|\s+and\s+|\s+)?\s*(\d+(?:\.\d+)?)/i) ||
+                       context.match(/medium[^\n\d]*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/i);
+      if (medMatch) {
+        mediumSpec = `DENSITY: ${medMatch[1]} lb/ft³, IFD: ${medMatch[2]}`;
+      }
+
+      // Firm specification: e.g. 'The "firm" is: 2.5/35' or 'firm: 2.5/35'
+      let firmSpec = null;
+      const firmMatch = context.match(/(?:firm|“firm”|"firm")[^:\d\n]*[:\s=is]+[^\d\n]*(\d+(?:\.\d+)?)\s*(?:\/|\s+and\s+|\s+)?\s*(\d+(?:\.\d+)?)/i) ||
+                        context.match(/firm[^\n\d]*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/i);
+      if (firmMatch) {
+        firmSpec = `DENSITY: ${firmMatch[1]} lb/ft³, IFD: ${firmMatch[2]}`;
+      }
+
+      // General specification fallback (if not specified per firmness)
+      let generalSpec = null;
+      if (!softSpec && !mediumSpec && !firmSpec) {
+        const ratioMatch = context.match(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
+        if (ratioMatch && (lowerContext.includes('ifd') || lowerContext.includes('density') || lowerContext.includes('spec'))) {
+          generalSpec = `DENSITY: ${ratioMatch[1]} lb/ft³, IFD: ${ratioMatch[2]}`;
+        }
+      }
+
+      // 3. Explicit Dimension Callouts (e.g. "change from 841mm to 956" or "825.5 to 831.9")
+      const changeMatch = context.match(/change\s+(?:from\s+)?(\d+(?:\.\d+)?)\s*(?:mm|in)?\s+to\s+(\d+(?:\.\d+)?)\s*(?:mm|in)?/i);
+
+      // 4. Material Change in Title Block
+      let newMaterial = null;
+      if (lowerContext.includes('material') && !lowerContext.includes('ifd') && !lowerContext.includes('density')) {
+        const matMatch = context.match(/material\s+(?:to\s+|is\s+)?([A-Za-z0-9\s]+)/i);
+        if (matMatch) newMaterial = matMatch[1].trim().toUpperCase();
+      }
+
+      // 5. Dacron Seam Note
+      const hasSeamNote = lowerContext.includes('seam') || lowerContext.includes('bottom face');
+
+      // 6. Cushion Size 32.75" (ONLY if explicitly mentioned)
+      const has3275 = lowerContext.includes('32.75');
+
+      // PROCESS EVERY DRAWING IN THE LOADED BATCH!
+      for (const fileObj of state.files) {
+        const elements = await extractDrawingElements(fileObj, 1);
+        if (!elements) continue;
+
+        // Firmness of this specific drawing
+        const firmness = elements.firmness || 'UNKNOWN';
+
+        // A. APPLY SPECIFICATION CHANGE BASED ON FIRMNESS
+        let assignedSpec = null;
+        if (firmness === 'SOFT' && softSpec) assignedSpec = softSpec;
+        else if (firmness === 'MEDIUM' && mediumSpec) assignedSpec = mediumSpec;
+        else if (firmness === 'FIRM' && firmSpec) assignedSpec = firmSpec;
+        else if (generalSpec) assignedSpec = generalSpec;
+
+        if (assignedSpec) {
+          const cellX = elements.specLine ? elements.specLine.x : 1760;
+          const cellY = elements.specLine ? elements.specLine.y : 1379;
+          const oldVal = elements.specLine ? elements.specLine.text : "DENSITY: 2.5 lb/ft³, IFD: 28 HR";
+
+          fileObj.redlines.push({
+            type: 'specification_change',
+            target: 'specification',
+            oldValue: oldVal,
+            newValue: assignedSpec,
+            lines: ["REVISED SPECIFICATION:", assignedSpec],
+            cellX: cellX,
+            cellY: cellY,
+            x: 1680,
+            y: 1060,
+            fontSize: 22,
+            cloud: true,
+            hasLeader: true
+          });
+        }
+
+        // B. APPLY THICKNESS CHANGE
+        if (formattedThick && elements.thicknessDim) {
+          fileObj.redlines.push({
             type: 'dimension_change',
             target: 'thickness',
             oldValue: elements.thicknessDim.str,
-            newValue: formattedNew,
+            newValue: formattedThick,
             x: elements.thicknessDim.x,
             y: elements.thicknessDim.y,
             fontSize: 24,
             cloud: true
           });
-        } else {
-          activeFile.redlines.push({
-            type: 'dimension_change',
-            target: 'thickness',
-            oldValue: "101.60",
-            newValue: formattedNew,
-            x: 1368,
-            y: 316,
-            fontSize: 24,
-            cloud: true
+        }
+
+        // C. APPLY WIDTH / LENGTH CHANGES (Planar dimensions)
+        if (formattedWL && elements.widthLengthDims && elements.widthLengthDims.length > 0) {
+          elements.widthLengthDims.forEach(d => {
+            if (!fileObj.redlines.some(rl => rl.x === d.x && rl.y === d.y)) {
+              fileObj.redlines.push({
+                type: 'dimension_change',
+                target: 'width_length',
+                oldValue: d.str,
+                newValue: formattedWL,
+                x: d.x,
+                y: d.y,
+                fontSize: 24,
+                cloud: true
+              });
+            }
           });
         }
-      }
 
-      // 2. Specification / IFD / Density Change: "Change the IFD and Density to 1.5/20"
-      if (lowerContext.includes('ifd') || lowerContext.includes('density') || lowerContext.includes('spec')) {
-        let newSpecStr = "DENSITY: 1.5 lb/ft³, IFD: 20";
-        const ratioMatch = context.match(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
-        if (ratioMatch) {
-          newSpecStr = `DENSITY: ${ratioMatch[1]} lb/ft³, IFD: ${ratioMatch[2]}`;
-        } else {
-          const densMatch = lowerContext.match(/density[^\d]*(\d+(?:\.\d+)?)/i);
-          const ifdMatch = lowerContext.match(/ifd[^\d]*(\d+(?:\.\d+)?)/i);
-          if (densMatch && ifdMatch) {
-            newSpecStr = `DENSITY: ${densMatch[1]} lb/ft³, IFD: ${ifdMatch[1]}`;
+        // D. APPLY 32.75" SOFT CORE EXPANSION (if requested in prompt)
+        if (has3275 && (firmness === 'SOFT' || lowerContext.includes(fileObj.partNo.toLowerCase()))) {
+          const dual32 = '32.75" (831.9 mm)';
+          if (elements.dimensions) {
+            const coreDims = elements.dimensions.filter(d => Math.abs(d.value - 825.5) < 3.0 || Math.abs(d.value - 812.8) < 3.0);
+            coreDims.forEach(d => {
+              if (!fileObj.redlines.some(rl => rl.x === d.x && rl.y === d.y)) {
+                fileObj.redlines.push({
+                  type: 'dimension_change',
+                  oldValue: d.str,
+                  newValue: dual32,
+                  x: d.x,
+                  y: d.y,
+                  fontSize: 24,
+                  cloud: true
+                });
+              }
+            });
           }
         }
 
-        if (elements && elements.specLine) {
-          activeFile.redlines.push({
-            type: 'specification_change',
-            target: 'specification',
-            oldValue: elements.specLine.text,
-            newValue: newSpecStr,
-            lines: ["REVISED SPECIFICATION:", newSpecStr],
-            cellX: elements.specLine.x,
-            cellY: elements.specLine.y,
-            x: 1680,
-            y: 1060,
-            fontSize: 22,
-            cloud: true,
-            hasLeader: true
-          });
-        } else {
-          activeFile.redlines.push({
-            type: 'specification_change',
-            target: 'specification',
-            oldValue: "DENSITY: 2.5 lb/ft³, IFD: 28 HR",
-            newValue: newSpecStr,
-            lines: ["REVISED SPECIFICATION:", newSpecStr],
-            cellX: 1760,
-            cellY: 1379,
-            x: 1680,
-            y: 1060,
-            fontSize: 22,
-            cloud: true,
-            hasLeader: true
-          });
-        }
-      }
-
-      // 3. Material Change in Title Block
-      if (lowerContext.includes('material') && !lowerContext.includes('ifd') && !lowerContext.includes('density')) {
-        const matMatch = context.match(/material\s+(?:to\s+|is\s+)?([A-Za-z0-9\s]+)/i);
-        const newMat = matMatch ? matMatch[1].trim() : "POLYURETHANE FOAM";
-        const oldMat = elements && elements.materialLine ? elements.materialLine.text : "POLYURETHANE FOAM";
-        const xPos = elements && elements.materialLine ? elements.materialLine.x : 1760;
-        const yPos = elements && elements.materialLine ? elements.materialLine.y : 1322;
-
-        activeFile.redlines.push({
-          type: 'material_change',
-          target: 'material',
-          oldValue: oldMat,
-          newValue: newMat.toUpperCase(),
-          lines: ["REVISED MATERIAL:", newMat.toUpperCase()],
-          cellX: xPos,
-          cellY: yPos,
-          x: 1680,
-          y: 1060,
-          fontSize: 22,
-          cloud: true,
-          hasLeader: true
-        });
-      }
-
-      // 4. Explicit Dimension Callouts (e.g. "change from 841mm to 956" or "825.5 to 831.9")
-      const changeMatch = context.match(/change\s+(?:from\s+)?(\d+(?:\.\d+)?)\s*(?:mm|in)?\s+to\s+(\d+(?:\.\d+)?)\s*(?:mm|in)?/i);
-      if (changeMatch) {
-        const oldVal = changeMatch[1];
-        const newVal = changeMatch[2];
-        const dualNew = formatDualDimension(newVal);
-
-        if (elements && elements.dimensions) {
-          const matched = elements.dimensions.filter(d => Math.abs(d.value - parseFloat(oldVal)) < 2.0);
-          if (matched.length > 0) {
-            matched.forEach(d => {
-              activeFile.redlines.push({
+        // E. APPLY EXPLICIT DIMENSION CALLOUTS
+        if (changeMatch && elements.dimensions) {
+          const oldVal = parseFloat(changeMatch[1]);
+          const newVal = changeMatch[2];
+          const dualNew = formatDualDimension(newVal);
+          const matched = elements.dimensions.filter(d => Math.abs(d.value - oldVal) < 2.0);
+          matched.forEach(d => {
+            if (!fileObj.redlines.some(rl => rl.x === d.x && rl.y === d.y)) {
+              fileObj.redlines.push({
                 type: 'dimension_change',
                 oldValue: d.str,
                 newValue: dualNew,
@@ -1484,102 +1598,108 @@
                 fontSize: 24,
                 cloud: true
               });
-            });
-          }
+            }
+          });
         }
-      }
 
-      // 5. Cushion Size 32.75" (ONLY if explicitly mentioned in context!)
-      if (lowerContext.includes('32.75') || (lowerContext.includes('soft') && lowerContext.includes('size'))) {
-        const dual32 = '32.75" (831.9 mm)';
-        if (elements && elements.dimensions) {
-          const coreDims = elements.dimensions.filter(d => Math.abs(d.value - 825.5) < 3.0 || Math.abs(d.value - 812.8) < 3.0);
-          coreDims.forEach(d => {
-            activeFile.redlines.push({
-              type: 'dimension_change',
-              oldValue: d.str,
-              newValue: dual32,
-              x: d.x,
-              y: d.y,
-              fontSize: 24,
-              cloud: true
-            });
+        // F. APPLY MATERIAL CHANGE
+        if (newMaterial) {
+          const cellX = elements.materialLine ? elements.materialLine.x : 1760;
+          const cellY = elements.materialLine ? elements.materialLine.y : 1322;
+          const oldMat = elements.materialLine ? elements.materialLine.text : "POLYURETHANE FOAM";
+
+          fileObj.redlines.push({
+            type: 'material_change',
+            target: 'material',
+            oldValue: oldMat,
+            newValue: newMaterial,
+            lines: ["REVISED MATERIAL:", newMaterial],
+            cellX: cellX,
+            cellY: cellY,
+            x: 1680,
+            y: 1060,
+            fontSize: 22,
+            cloud: true,
+            hasLeader: true
+          });
+        }
+
+        // G. APPLY DACRON SEAM NOTE
+        if (hasSeamNote && (fileObj.isWrap || fileObj.isAssy || lowerContext.includes('all'))) {
+          fileObj.redlines.push({
+            type: 'note',
+            lines: [
+              "THE SEAM OF THE DACRON (FIBER) WRAP TO BE",
+              "LOCATED ON THE BOTTOM FACE OF THE CUSHION"
+            ],
+            x: 950,
+            y: 130,
+            fontSize: 24,
+            cloud: true
           });
         }
       }
-
-      // 6. Dacron Seam Note (ONLY if explicitly mentioned in context!)
-      if (lowerContext.includes('seam') || lowerContext.includes('bottom face')) {
-        activeFile.redlines.push({
-          type: 'note',
-          lines: [
-            "THE SEAM OF THE DACRON (FIBER) WRAP TO BE",
-            "LOCATED ON THE BOTTOM FACE OF THE CUSHION"
-          ],
-          x: 950,
-          y: 130,
-          fontSize: 24,
-          cloud: true
-        });
-      }
     }
 
-    // Google Gemini API Redline Assistant
+    // Google Gemini API Batch Redline Assistant
     async function executeGeminiAiRedlines(userPrompt) {
-      const activeFile = state.files.find(f => f.id === state.activeFileId) || state.files[0];
-      const elements = activeFile ? await extractDrawingElements(activeFile, state.currentPage) : null;
+      if (state.files.length === 0) return;
 
-      const detectedSummary = elements ? {
-        dimensions_on_sheet: elements.dimensions.map(d => ({
-          value_mm: d.value,
-          text: d.str,
-          x: d.x,
-          y: d.y,
-          is_thickness: d === elements.thicknessDim
-        })),
-        title_block_specification: elements.specLine ? {
-          text: elements.specLine.text,
-          x: elements.specLine.x,
-          y: elements.specLine.y
-        } : { text: "DENSITY: 2.5 lb/ft³, IFD: 28 HR", x: 1760, y: 1379 },
-        title_block_material: elements.materialLine ? {
-          text: elements.materialLine.text,
-          x: elements.materialLine.x,
-          y: elements.materialLine.y
-        } : { text: "POLYURETHANE FOAM", x: 1760, y: 1322 },
-        drawing_zones: {
-          title_block_specs: "Bottom right (x: ~1760, y: ~1379)",
-          open_notes_area: "Top center (x: 950, y: 130)",
-          thickness_side_view: elements.thicknessDim ? `x: ${elements.thicknessDim.x}, y: ${elements.thicknessDim.y}` : "Side view"
-        }
-      } : {};
+      // Extract landmark elements for ALL drawings in the batch
+      const batchSummary = [];
+      for (const f of state.files) {
+        const elem = await extractDrawingElements(f, 1);
+        batchSummary.push({
+          partNo: f.partNo,
+          fileName: f.name,
+          title: elem?.titleText || f.name,
+          firmness: elem?.firmness || "UNKNOWN",
+          cushionType: elem?.cushionType || "CORE",
+          specText: elem?.specLine ? elem.specLine.text : "DENSITY: 2.5 lb/ft³, IFD: 28 HR",
+          materialText: elem?.materialLine ? elem.materialLine.text : "POLYURETHANE FOAM",
+          thicknessDimension: elem?.thicknessDim ? { value_mm: elem.thicknessDim.value, text: elem.thicknessDim.str } : null,
+          widthLengthDimensions: elem?.widthLengthDims ? elem.widthLengthDims.map(d => ({ value_mm: d.value, text: d.str })) : [],
+          allDimensions: elem?.dimensions ? elem.dimensions.map(d => ({ value_mm: d.value, text: d.str, isChamfer: d.isChamfer })) : []
+        });
+      }
 
       const systemPrompt = `You are an expert manufacturing CAD drawing redline specialist following Rules.md:
 1. Markup Color: Pure Red (#FF0000).
-2. Large font size: 24 pt or higher (20 pt for title block specifications).
+2. Large font size: 24 pt for dimensions and notes, 22 pt for title block specifications.
 3. Revision clouds: wavy cloud border surrounds both strike-through and new values.
 4. Title block revision letter: MUST BE LEFT UNTOUCHED.
-5. ZERO GHOST REDLINES / CRITICAL RULE: ONLY generate modifications that the user EXPLICITLY requested in their prompt. DO NOT invent or carry over unrequested modifications (such as 32.75" or seam relocation) unless the user explicitly requested them in the change request.
-6. PDF Layout Knowledge:
-   - THICKNESS: Thickness is usually the smallest linear dimension on the drawing (located on the side view). Match the coordinates of the detected thickness dimension!
-   - TITLE BLOCK SPECS & MATERIAL CHANGES: IFD, Density, and material specifications live in the bottom-right title block cells (SPECIFICATION at x: ~1760, y: ~1379, MATERIAL at x: ~1760, y: ~1322).
-     CRITICAL PLACEMENT RULE: Revision notes MUST NEVER be drawn directly inside the title block grid cells, as red text overlaps black title block text and grid lines, becoming illegible. INSTEAD, revision notes MUST be posted in the clear drawing area ABOVE the title block (x: 1680, y: 1060) surrounded by a revision cloud, with a leader arrow pointing down to the struck-through title block cell.
-   - DUAL UNITS STANDARD: All dimension redlines must list BOTH inches and millimeters (e.g. 4.5" [114.3 mm] or 37.64" [956.0 mm]).
-   - GENERAL NOTES: Prominent revision notes go in the open drawing area (x: 950, y: 130).
+5. ZERO GHOST REDLINES: ONLY generate modifications that the user EXPLICITLY requested in their prompt.
+6. BATCH PROCESSING INSTRUCTIONS:
+   - A batch of ${state.files.length} engineering drawings is currently loaded.
+   - The user provided a single batch change request that applies across all relevant drawings.
+   - Analyze each drawing's firmness identifier (SOFT, MEDIUM, FIRM) from its Title/Spec, cushion type (BOX, FLANGE), and dimensions.
+   - For 3D Bounding Dimensions (e.g. 31"x31"x4.5"):
+     - Width and Length (the larger planar dimensions, e.g. 825.5 or 831.9): redline to dual units: 31" (787.4 mm).
+     - Thickness (the smallest dimension on side view, e.g. 101.60): redline to dual units: 4.5" (114.3 mm).
+     - Always format dual dimensions as: {inches}" ({mm} mm).
+   - For Firmness-Specific Specifications (e.g. soft is 1.9/30, medium is 2.0/31, firm is 2.5/35):
+     - Identify each drawing's firmness and apply the corresponding specification!
+     - SOFT cushions -> DENSITY: 1.9 lb/ft³, IFD: 30
+     - MEDIUM cushions -> DENSITY: 2.0 lb/ft³, IFD: 31
+     - FIRM cushions -> DENSITY: 2.5 lb/ft³, IFD: 35
+   - TITLE BLOCK SPECIFICATION PLACEMENT RULE:
+     - Revision notes ("REVISED SPECIFICATION:") MUST NEVER be drawn inside the title block grid cells.
+     - They MUST be posted ABOVE the title block at x: 1680, y: 1060 surrounded by a revision cloud, with a leader arrow pointing down to the struck-through specification cell.
 
 Return strict JSON with this structure:
 {
-  "modifications": [
+  "drawings": [
     {
-      "partNo": "${activeFile ? activeFile.partNo : 'current'}",
-      "type": "dimension_change" | "specification_change" | "material_change" | "note",
-      "target": "thickness" | "width" | "specification" | "material" | "note",
-      "oldValue": "101.60",
-      "newValue": "4.5\\" (114.3 mm)",
-      "lines": ["line 1", "line 2"],
-      "fontSize": 24,
-      "x": 1368,
-      "y": 316
+      "partNo": "93-020191",
+      "modifications": [
+        {
+          "type": "dimension_change" | "specification_change" | "material_change" | "note",
+          "target": "thickness" | "width_length" | "specification" | "material" | "note",
+          "oldValue": "101.60",
+          "newValue": "4.5\\" (114.3 mm)",
+          "lines": ["REVISED SPECIFICATION:", "DENSITY: 2.0 lb/ft³, IFD: 31"]
+        }
+      ]
     }
   ]
 }`;
@@ -1590,9 +1710,8 @@ Return strict JSON with this structure:
             role: "user",
             parts: [
               { text: systemPrompt },
-              { text: `Drawing parts loaded: ${state.files.map(f => f.partNo).join(', ')}` },
-              { text: `Detected Sheet Elements: ${JSON.stringify(detectedSummary)}` },
-              { text: `User Change Request: ${userPrompt}` }
+              { text: `Loaded Drawings Batch Details:\n${JSON.stringify(batchSummary, null, 2)}` },
+              { text: `User Batch Change Request:\n${userPrompt}` }
             ]
           }
         ],
@@ -1638,61 +1757,121 @@ Return strict JSON with this structure:
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (rawText) {
         const parsed = JSON.parse(rawText);
-        if (parsed.modifications && Array.isArray(parsed.modifications)) {
-          parsed.modifications.forEach(mod => {
-            const matchedFile = state.files.find(f => f.partNo.includes(mod.partNo) || mod.partNo.includes(f.partNo)) || activeFile;
-            if (!matchedFile) return;
+        let drawingItems = [];
+        if (parsed.drawings && Array.isArray(parsed.drawings)) {
+          drawingItems = parsed.drawings;
+        } else if (parsed.modifications && Array.isArray(parsed.modifications)) {
+          const grouped = {};
+          parsed.modifications.forEach(m => {
+            const p = m.partNo || 'all';
+            if (!grouped[p]) grouped[p] = [];
+            grouped[p].push(m);
+          });
+          drawingItems = Object.keys(grouped).map(p => ({ partNo: p, modifications: grouped[p] }));
+        }
 
-            // Intelligent coordinate snapping & formatting
-            if (mod.target === 'thickness' || /thickness/i.test(mod.oldValue || '') || /thickness/i.test(mod.newValue || '')) {
-              if (elements && elements.thicknessDim) {
-                mod.x = elements.thicknessDim.x;
-                mod.y = elements.thicknessDim.y;
-                mod.oldValue = elements.thicknessDim.str;
-              }
-              mod.newValue = formatDualDimension(mod.newValue);
-              mod.type = 'dimension_change';
-            } else if (mod.target === 'specification' || mod.type === 'specification_change' || /density|ifd|spec/i.test(mod.newValue || '') || /density|ifd|spec/i.test(mod.oldValue || '')) {
-              mod.type = 'specification_change';
-              mod.cellX = elements && elements.specLine ? elements.specLine.x : 1760;
-              mod.cellY = elements && elements.specLine ? elements.specLine.y : 1379;
-              mod.oldValue = elements && elements.specLine ? elements.specLine.text : (mod.oldValue || "DENSITY: 2.5 lb/ft³, IFD: 28 HR");
-              mod.x = 1680;
-              mod.y = 1060;
-              mod.lines = ["REVISED SPECIFICATION:", mod.newValue];
-              mod.fontSize = 22;
-              mod.cloud = true;
-              mod.hasLeader = true;
-            } else if (mod.target === 'material' || mod.type === 'material_change' || /material|polyurethane/i.test(mod.newValue || '')) {
-              mod.type = 'material_change';
-              mod.cellX = elements && elements.materialLine ? elements.materialLine.x : 1760;
-              mod.cellY = elements && elements.materialLine ? elements.materialLine.y : 1322;
-              mod.oldValue = elements && elements.materialLine ? elements.materialLine.text : (mod.oldValue || "POLYURETHANE FOAM");
-              mod.x = 1680;
-              mod.y = 1060;
-              mod.lines = ["REVISED MATERIAL:", mod.newValue];
-              mod.fontSize = 22;
-              mod.cloud = true;
-              mod.hasLeader = true;
-            } else if (mod.type === 'dimension_change') {
-              mod.newValue = formatDualDimension(mod.newValue);
-              if (elements && elements.dimensions) {
-                const match = elements.dimensions.find(d => Math.abs(d.value - parseFloat(mod.oldValue)) < 2.0);
-                if (match) {
-                  mod.x = match.x;
-                  mod.y = match.y;
-                  mod.oldValue = match.str;
-                }
-              }
+        if (drawingItems.length > 0) {
+          for (const item of drawingItems) {
+            let targetFiles = [];
+            if (!item.partNo || item.partNo === 'all' || item.partNo === 'current') {
+              targetFiles = state.files;
+            } else {
+              targetFiles = state.files.filter(f => f.partNo.includes(item.partNo) || item.partNo.includes(f.partNo));
+              if (targetFiles.length === 0) targetFiles = state.files;
             }
 
-            matchedFile.redlines.push(mod);
-          });
+            for (const targetFile of targetFiles) {
+              const elements = await extractDrawingElements(targetFile, 1);
+              if (!elements) continue;
+
+              item.modifications.forEach(mod => {
+                // Intelligent coordinate snapping & formatting
+                if (mod.target === 'thickness' || /thickness/i.test(mod.oldValue || '') || /thickness/i.test(mod.newValue || '')) {
+                  if (elements.thicknessDim) {
+                    mod.x = elements.thicknessDim.x;
+                    mod.y = elements.thicknessDim.y;
+                    mod.oldValue = elements.thicknessDim.str;
+                  }
+                  mod.newValue = formatDualDimension(mod.newValue);
+                  mod.type = 'dimension_change';
+                  mod.fontSize = 24;
+                  mod.cloud = true;
+                  targetFile.redlines.push(mod);
+
+                } else if (mod.target === 'width_length' || mod.target === 'width' || mod.target === 'length') {
+                  const dualNew = formatDualDimension(mod.newValue);
+                  if (elements.widthLengthDims && elements.widthLengthDims.length > 0) {
+                    elements.widthLengthDims.forEach(d => {
+                      if (!targetFile.redlines.some(rl => rl.x === d.x && rl.y === d.y)) {
+                        targetFile.redlines.push({
+                          type: 'dimension_change',
+                          target: 'width_length',
+                          oldValue: d.str,
+                          newValue: dualNew,
+                          x: d.x,
+                          y: d.y,
+                          fontSize: 24,
+                          cloud: true
+                        });
+                      }
+                    });
+                  }
+
+                } else if (mod.target === 'specification' || mod.type === 'specification_change' || /density|ifd|spec/i.test(mod.newValue || '') || /density|ifd|spec/i.test(mod.oldValue || '')) {
+                  mod.type = 'specification_change';
+                  mod.cellX = elements.specLine ? elements.specLine.x : 1760;
+                  mod.cellY = elements.specLine ? elements.specLine.y : 1379;
+                  mod.oldValue = elements.specLine ? elements.specLine.text : (mod.oldValue || "DENSITY: 2.5 lb/ft³, IFD: 28 HR");
+                  mod.x = 1680;
+                  mod.y = 1060;
+                  mod.lines = mod.lines || ["REVISED SPECIFICATION:", mod.newValue];
+                  mod.fontSize = 22;
+                  mod.cloud = true;
+                  mod.hasLeader = true;
+                  targetFile.redlines.push(mod);
+
+                } else if (mod.target === 'material' || mod.type === 'material_change' || /material|polyurethane/i.test(mod.newValue || '')) {
+                  mod.type = 'material_change';
+                  mod.cellX = elements.materialLine ? elements.materialLine.x : 1760;
+                  mod.cellY = elements.materialLine ? elements.materialLine.y : 1322;
+                  mod.oldValue = elements.materialLine ? elements.materialLine.text : (mod.oldValue || "POLYURETHANE FOAM");
+                  mod.x = 1680;
+                  mod.y = 1060;
+                  mod.lines = mod.lines || ["REVISED MATERIAL:", mod.newValue];
+                  mod.fontSize = 22;
+                  mod.cloud = true;
+                  mod.hasLeader = true;
+                  targetFile.redlines.push(mod);
+
+                } else if (mod.type === 'dimension_change') {
+                  mod.newValue = formatDualDimension(mod.newValue);
+                  if (elements.dimensions) {
+                    const match = elements.dimensions.find(d => Math.abs(d.value - parseFloat(mod.oldValue)) < 2.0);
+                    if (match) {
+                      mod.x = match.x;
+                      mod.y = match.y;
+                      mod.oldValue = match.str;
+                    }
+                  }
+                  mod.fontSize = 24;
+                  mod.cloud = true;
+                  targetFile.redlines.push(mod);
+
+                } else if (mod.type === 'note') {
+                  mod.x = mod.x || 950;
+                  mod.y = mod.y || 130;
+                  mod.fontSize = 24;
+                  mod.cloud = true;
+                  targetFile.redlines.push(mod);
+                }
+              });
+            }
+          }
           return;
         }
       }
 
-      // Fallback to local engine
+      // Fallback to local deterministic batch engine
       await executeDeterministicRedlines(userPrompt);
     }
 
@@ -1770,99 +1949,118 @@ Return strict JSON with this structure:
       return window.PDFLib;
     }
 
-    // Download Redlined PDF using PDF-Lib
-    async function downloadActiveRedline() {
-      const file = state.files.find(f => f.id === state.activeFileId);
-      if (!file) {
-        alert("Please load and select a drawing to download.");
-        return;
+    // Robust async loader for JSZip (bundled local script with multi-CDN fallback)
+    async function ensureJsZip() {
+      if (window.JSZip) return window.JSZip;
+
+      const sources = [
+        'jszip.min.js',
+        '/jszip.min.js',
+        'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+        'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js'
+      ];
+
+      for (const src of sources) {
+        if (window.JSZip) return window.JSZip;
+        try {
+          await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = src;
+            script.onload = () => {
+              if (window.JSZip) resolve();
+              else reject(new Error('JSZip missing'));
+            };
+            script.onerror = () => reject(new Error(`Failed to load ${src}`));
+            document.head.appendChild(script);
+          });
+          if (window.JSZip) return window.JSZip;
+        } catch (e) {
+          console.warn(`Could not load JSZip from ${src}:`, e.message);
+        }
       }
 
-      const btn = document.getElementById('downloadBtn');
-      const originalHtml = btn ? btn.innerHTML : '';
-      if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = `
-          <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-          </svg>
-          Exporting...
-        `;
+      if (!window.JSZip) {
+        throw new Error('JSZip library failed to load. Please check your internet connection.');
       }
+      return window.JSZip;
+    }
 
-      try {
-        const PDFLibInstance = await ensurePdfLib();
-        const { PDFDocument, rgb, StandardFonts } = PDFLibInstance;
-        const pdfDoc = await PDFDocument.load(file.pdfBytes.slice(0), { ignoreEncryption: true });
-        const pages = pdfDoc.getPages();
-        const pageIdx = Math.max(0, Math.min(pages.length - 1, (state.currentPage || 1) - 1));
-        const page = pages[pageIdx];
-        const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    // Generate modified PDF bytes for a single file using PDF-Lib
+    async function generateRedlinedPdfBytes(file, PDFLibInstance) {
+      const { PDFDocument, rgb, StandardFonts } = PDFLibInstance;
+      const pdfDoc = await PDFDocument.load(file.pdfBytes.slice(0), { ignoreEncryption: true });
+      const pages = pdfDoc.getPages();
+      if (pages.length === 0) return await pdfDoc.save();
 
-        const pageHeight = page.getHeight();
+      const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-        // Helper function to draw curved leader arrow in PDF-Lib
-        function drawPdfLeaderArrow(page, fromX, fromY, toX, toY, color) {
-          const dx = toX - fromX;
-          const dy = toY - fromY;
-          const cp1X = fromX - 60;
-          const cp1Y = fromY + dy * 0.4;
-          const cp2X = Math.min(fromX, toX) - 20;
-          const cp2Y = fromY + dy * 0.85;
+      // Helper function to draw curved leader arrow in PDF-Lib
+      function drawPdfLeaderArrow(page, fromX, fromY, toX, toY, color) {
+        const dx = toX - fromX;
+        const dy = toY - fromY;
+        const cp1X = fromX - 60;
+        const cp1Y = fromY + dy * 0.4;
+        const cp2X = Math.min(fromX, toX) - 20;
+        const cp2Y = fromY + dy * 0.85;
 
-          const steps = 14;
-          let prevX = fromX;
-          let prevY = fromY;
+        const steps = 14;
+        let prevX = fromX;
+        let prevY = fromY;
 
-          for (let i = 1; i <= steps; i++) {
-            const t = i / steps;
-            const mt = 1 - t;
-            const curX = mt * mt * mt * fromX + 3 * mt * mt * t * cp1X + 3 * mt * t * t * cp2X + t * t * t * toX;
-            const curY = mt * mt * mt * fromY + 3 * mt * mt * t * cp1Y + 3 * mt * t * t * cp2Y + t * t * t * toY;
-
-            page.drawLine({
-              start: { x: prevX, y: prevY },
-              end: { x: curX, y: curY },
-              thickness: 2.2,
-              color: color
-            });
-            prevX = curX;
-            prevY = curY;
-          }
-
-          // Tangent angle at the arrow tip (toX, toY) relative to cp2
-          const angle = Math.atan2(toY - cp2Y, toX - cp2X);
-          const headLength = 15;
-          const headAngle = Math.PI / 7;
-
-          const barb1X = toX - headLength * Math.cos(angle - headAngle);
-          const barb1Y = toY - headLength * Math.sin(angle - headAngle);
-          const barb2X = toX - headLength * Math.cos(angle + headAngle);
-          const barb2Y = toY - headLength * Math.sin(angle + headAngle);
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          const mt = 1 - t;
+          const curX = mt * mt * mt * fromX + 3 * mt * mt * t * cp1X + 3 * mt * t * t * cp2X + t * t * t * toX;
+          const curY = mt * mt * mt * fromY + 3 * mt * mt * t * cp1Y + 3 * mt * t * t * cp2Y + t * t * t * toY;
 
           page.drawLine({
-            start: { x: toX, y: toY },
-            end: { x: barb1X, y: barb1Y },
+            start: { x: prevX, y: prevY },
+            end: { x: curX, y: curY },
             thickness: 2.2,
             color: color
           });
-          page.drawLine({
-            start: { x: toX, y: toY },
-            end: { x: barb2X, y: barb2Y },
-            thickness: 2.2,
-            color: color
-          });
-          page.drawLine({
-            start: { x: barb1X, y: barb1Y },
-            end: { x: barb2X, y: barb2Y },
-            thickness: 1.8,
-            color: color
-          });
+          prevX = curX;
+          prevY = curY;
         }
 
-        // Draw redline annotations
+        // Tangent angle at the arrow tip (toX, toY) relative to cp2
+        const angle = Math.atan2(toY - cp2Y, toX - cp2X);
+        const headLength = 15;
+        const headAngle = Math.PI / 7;
+
+        const barb1X = toX - headLength * Math.cos(angle - headAngle);
+        const barb1Y = toY - headLength * Math.sin(angle - headAngle);
+        const barb2X = toX - headLength * Math.cos(angle + headAngle);
+        const barb2Y = toY - headLength * Math.sin(angle + headAngle);
+
+        page.drawLine({
+          start: { x: toX, y: toY },
+          end: { x: barb1X, y: barb1Y },
+          thickness: 2.2,
+          color: color
+        });
+        page.drawLine({
+          start: { x: toX, y: toY },
+          end: { x: barb2X, y: barb2Y },
+          thickness: 2.2,
+          color: color
+        });
+        page.drawLine({
+          start: { x: barb1X, y: barb1Y },
+          end: { x: barb2X, y: barb2Y },
+          thickness: 1.8,
+          color: color
+        });
+      }
+
+      // Draw redline annotations across relevant pages (default to page 0 / sheet 1)
+      if (file.redlines && file.redlines.length > 0) {
         file.redlines.forEach(rl => {
+          const pageIdx = (rl.page && rl.page > 0 && rl.page <= pages.length) ? (rl.page - 1) : 0;
+          const page = pages[pageIdx];
+          const pageHeight = page.getHeight();
+
           // A. TITLE BLOCK SPECIFICATION & MATERIAL CHANGES
           if (rl.type === 'specification_change' || rl.type === 'material_change') {
             const cx = rl.cellX || 1760;
@@ -1983,9 +2181,35 @@ Return strict JSON with this structure:
             });
           }
         });
+      }
 
-        // Save and trigger download
-        const modifiedBytes = await pdfDoc.save();
+      return await pdfDoc.save();
+    }
+
+    // Download Active Redlined PDF using PDF-Lib
+    async function downloadActiveRedline() {
+      const file = state.files.find(f => f.id === state.activeFileId);
+      if (!file) {
+        alert("Please load and select a drawing to download.");
+        return;
+      }
+
+      const btn = document.getElementById('downloadBtn');
+      const originalHtml = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `
+          <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          Exporting...
+        `;
+      }
+
+      try {
+        const PDFLibInstance = await ensurePdfLib();
+        const modifiedBytes = await generateRedlinedPdfBytes(file, PDFLibInstance);
         const blob = new Blob([modifiedBytes], { type: 'application/pdf' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
@@ -2000,6 +2224,61 @@ Return strict JSON with this structure:
       } catch (err) {
         console.error("PDF export error", err);
         alert("Failed to export redlined PDF: " + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        }
+      }
+    }
+
+    // Download Entire Batch as ZIP
+    async function downloadAllRedlinesZip() {
+      if (state.files.length === 0) {
+        alert("Please load at least one drawing first.");
+        return;
+      }
+
+      const btn = document.getElementById('downloadAllBtn');
+      const originalHtml = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `
+          <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          Exporting Batch ZIP...
+        `;
+      }
+
+      try {
+        const PDFLibInstance = await ensurePdfLib();
+        const JSZipClass = await ensureJsZip();
+        const zip = new JSZipClass();
+
+        let count = 0;
+        for (const file of state.files) {
+          const pdfBytes = await generateRedlinedPdfBytes(file, PDFLibInstance);
+          const filename = `${file.partNo || ('drawing_' + (count + 1))} redlines.pdf`;
+          zip.file(filename, pdfBytes);
+          count++;
+        }
+
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(zipBlob);
+        link.download = `Batch_Redlines_${new Date().toISOString().slice(0, 10)}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => {
+          document.body.removeChild(link);
+          URL.revokeObjectURL(link.href);
+        }, 150);
+
+      } catch (err) {
+        console.error("Batch ZIP export error", err);
+        alert("Failed to export batch redlines ZIP: " + err.message);
       } finally {
         if (btn) {
           btn.disabled = false;

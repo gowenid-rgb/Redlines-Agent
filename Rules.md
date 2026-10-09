@@ -63,5 +63,33 @@ All markup is drawn in **Red** (`#FF0000` / RGB `1.0, 0.0, 0.0`):
    - Thickness -> locate smallest linear dimension on side view.
    - Specs -> locate `DENSITY` / `IFD` / `SPECIFICATION` in bottom-right title block.
    - Materials -> locate `MATERIAL` in bottom-right title block.
-   - Dimensions -> locate matching numeric values in drawing window.
 3. **Apply Markup**: Strike through old text at its exact coordinates, insert dual-unit text above, and wrap in a wavy revision cloud.
+
+---
+
+## 5. Batch Redlining & Multi-Drawing Intelligence
+
+### Multi-Drawing Ingestion & Universal Prompts
+- Users can drop a batch of engineering PDF drawings at once into the drop zone.
+- Prompts are interpreted globally across the entire batch rather than just for the actively viewed drawing.
+- The AI / rule engine detects which changes apply universally (e.g., all cushions changing to `31"x31"x4.5"`) and which apply conditionally based on drawing properties.
+
+### Firmness Identifier & Specification Mapping
+Engineering cushion drawings are automatically classified into firmness tiers based on their title block and drawing text:
+- **SOFT**: Identified by `SOFT` in the drawing title or existing title block IFD `24`.
+  - Maps to user-specified Soft specs (e.g., `1.9/30` -> `DENSITY: 1.9 lb/ft³, IFD: 30`).
+- **MEDIUM**: Identified by `MEDIUM` in the drawing title or existing title block IFD `28`.
+  - Maps to user-specified Medium specs (e.g., `2.0/31` -> `DENSITY: 2.0 lb/ft³, IFD: 31`).
+- **FIRM**: Identified by `FIRM` in the drawing title or existing title block IFD `42` / `35`.
+  - Maps to user-specified Firm specs (e.g., `2.5/35` -> `DENSITY: 2.5 lb/ft³, IFD: 35`).
+
+### 3D Bounding Dimensions in Batch Processing
+When a bounding dimension is requested (e.g., `31"x31"x4.5"`):
+- The planar width and length (larger dimensions, e.g., `31" / 787.4 mm`) are redlined on the front view of all cushions in the batch.
+- The thickness (smallest dimension, e.g., `4.5" / 114.3 mm`) is redlined on the side view profile across all cushions in the batch.
+
+### Batch Review & Export
+- The user can click any drawing in the batch list to visually inspect the applied redlines in the Output Window.
+- **Single PDF Download**: Click "Download PDF" to export the active drawing with high-fidelity vector redlines.
+- **Batch ZIP Download**: Click "Download All (ZIP)" to bundle all redlined drawings into a single organized ZIP archive (`Batch_Redlines_YYYY-MM-DD.zip`).
+
